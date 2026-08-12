@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>transposer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf8;
+    --fg: #1b1a18;
+    --muted: #6d6a64;
+    --line: #d9d5cd;
+    --accent: #7a5cff;
+    --ok: #1e7a4a;
+    --warn: #9a6b00;
+    --err: #b3261e;
+    --card: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151a; --fg: #eceaf2; --muted: #a09caa; --line: #35323d;
+      --accent: #a48bff; --ok: #6fd39b; --warn: #e0b25a; --err: #ff8f85;
+      --card: #1f1e25;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 62rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 0 0 2rem; }
+  form, .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+  label { display: block; font-weight: 600; font-size: .8rem; text-transform: uppercase;
+          letter-spacing: .04em; color: var(--muted); margin-bottom: .3rem; }
+  input, select, button {
+    width: 100%; padding: .55rem .7rem; border-radius: 8px; font: inherit;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  }
+  input[type=file] { padding: .4rem; }
+  .hint { font-size: .8rem; color: var(--muted); margin-top: .3rem; }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 600; cursor: pointer; margin-top: 1.25rem;
+  }
+  button.primary:disabled { opacity: .55; cursor: progress; }
+  details summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+  details { margin-top: 1rem; }
+  details .grid { margin-top: 1rem; }
+  .job { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; margin-bottom: .75rem; }
+  .job header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .job h3 { margin: 0; font-size: 1rem; }
+  .badge { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
+           padding: .15rem .5rem; border-radius: 999px; border: 1px solid currentColor; }
+  .queued, .running { color: var(--warn); }
+  .done { color: var(--ok); }
+  .failed { color: var(--err); }
+  .warnings { margin: .6rem 0 0; padding-left: 1.1rem; color: var(--warn); font-size: .86rem; }
+  .links a { margin-right: .9rem; color: var(--accent); }
+  .engines { font-size: .86rem; color: var(--muted); }
+  .engines li { margin-bottom: .2rem; }
+  .engines .off { opacity: .65; }
+  .preview { margin-top: .9rem; border: 1px solid var(--line); border-radius: 8px;
+             overflow: auto; max-height: 30rem; background: #fff; }
+  .preview svg { width: 100%; height: auto; display: block; }
+  code { background: color-mix(in srgb, var(--fg) 8%, transparent); padding: .1em .35em; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>transposer</h1>
+  <p class="sub">Read sheet music with OMR, transpose it to any key, get a new PDF. Version {{ version }}.</p>
+
+  <form id="upload">
+    <div class="grid">
+      <div>
+        <label for="file">Sheet music</label>
+        <input id="file" name="file" type="file" required
+               accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.xml,.musicxml,.mxl,.mid,.midi,.abc">
+        <p class="hint">PDF or image to recognise, or MusicXML/MIDI to transpose directly.</p>
+      </div>
+      <div>
+        <label for="target">Target key</label>
+        <input id="target" name="target" value="C" required>
+        <p class="hint">A key (<code>C</code>, <code>F#m</code>, <code>Bb major</code>, <code>C-duuri</code>) or an interval (<code>-M3</code>, <code>+5</code>).</p>
+      </div>
+      <div>
+        <label for="engine">OMR engine</label>
+        <select id="engine" name="engine">
+          <option value="auto">auto — best available</option>
+          {% for engine in engines %}
+          <option value="{{ engine.name }}" {% if not engine.ok %}disabled{% endif %}>
+            {{ engine.name }}{% if not engine.ok %} (unavailable){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <details>
+      <summary>More options</summary>
+      <div class="grid">
+        <div>
+          <label for="direction">Direction</label>
+          <select id="direction" name="direction">
+            <option value="auto">auto — shortest move</option>
+            <option value="down">down</option>
+            <option value="up">up</option>
+          </select>
+        </div>
+        <div>
+          <label for="octave_shift">Extra octaves</label>
+          <input id="octave_shift" name="octave_shift" type="number" value="0" min="-3" max="3">
+        </div>
+        <div>
+          <label for="instrument">Write for instrument</label>
+          <select id="instrument" name="instrument">
+            <option value="">concert pitch</option>
+            {% for name in instruments %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="paper">Paper</label>
+          <select id="paper" name="paper">
+            {% for size in ["a4", "a3", "a5", "letter", "legal", "tabloid"] %}
+            <option value="{{ size }}">{{ size }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="scale">Staff size (%)</label>
+          <input id="scale" name="scale" type="number" value="40" min="10" max="120">
+        </div>
+        <div>
+          <label for="dpi">Scan resolution (dpi)</label>
+          <input id="dpi" name="dpi" type="number" value="{{ default_dpi }}" min="72" max="600">
+        </div>
+        <div>
+          <label for="key_changes">Mid-score key changes</label>
+          <select id="key_changes" name="key_changes">
+            <option value="auto">auto — drop brief ones</option>
+            <option value="keep">keep all</option>
+            <option value="drop">keep only the first</option>
+          </select>
+        </div>
+        <div>
+          <label for="renderer">Engraver</label>
+          <select id="renderer" name="renderer">
+            <option value="auto">auto</option>
+            {% for renderer in renderers %}
+            <option value="{{ renderer.name }}" {% if not renderer.ok %}disabled{% endif %}>
+              {{ renderer.name }}{% if not renderer.ok %} (unavailable){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="drop_text">Unreadable text</label>
+          <select id="drop_text" name="drop_text">
+            <option value="false">keep it</option>
+            <option value="true">delete garbled lyrics</option>
+          </select>
+        </div>
+        <div>
+          <label for="landscape">Orientation</label>
+          <select id="landscape" name="landscape">
+            <option value="false">portrait</option>
+            <option value="true">landscape</option>
+          </select>
+        </div>
+      </div>
+    </details>
+
+    <button class="primary" type="submit">Transpose</button>
+  </form>
+
+  <section id="jobs"></section>
+
+  <div class="card engines">
+    <strong>Engines on this server</strong>
+    <ul>
+      {% for engine in engines %}
+      <li class="{{ '' if engine.ok else 'off' }}">
+        <code>{{ engine.name }}</code> — {{ engine.description }}
+        {% if not engine.ok %}<br><em>{{ engine.reason }}</em>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</main>
+
+<script>
+const jobsEl = document.getElementById("jobs");
+const known = new Map();
+const polling = new Set();
+
+document.getElementById("upload").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector("button");
+  button.disabled = true;
+  button.textContent = "Uploading…";
+  try {
+    const response = await fetch("/jobs", { method: "POST", body: new FormData(form) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "upload failed");
+    track(payload);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Transpose";
+  }
+});
+
+function track(job) {
+  known.set(job.id, job);
+  render();
+  if (!polling.has(job.id) && (job.status === "queued" || job.status === "running")) {
+    polling.add(job.id);
+    poll(job.id);
+  }
+}
+
+async function poll(id) {
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const response = await fetch(`/jobs/${id}`);
+    if (!response.ok) break;
+    const job = await response.json();
+    known.set(id, job);
+    render();
+    if (job.status === "done" || job.status === "failed") break;
+  }
+  polling.delete(id);
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function render() {
+  const jobs = [...known.values()].sort((a, b) => b.elapsed - a.elapsed);
+  jobsEl.innerHTML = jobs.map((job) => {
+    const warnings = (job.warnings || [])
+      .map((w) => `<li>${escapeHtml(w)}</li>`).join("");
+    const body = job.status === "done"
+      ? `<p>${escapeHtml(job.summary || "")}</p>
+         <p class="links">
+           <a href="${job.pdf_url}" download>Download PDF</a>
+           <a href="${job.musicxml_url}" download>Download MusicXML</a>
+         </p>
+         ${warnings ? `<ul class="warnings">${warnings}</ul>` : ""}
+         <div class="preview" data-preview="${job.preview_url}"></div>`
+      : job.status === "failed"
+        ? `<p class="failed">${escapeHtml(job.message)}</p>`
+        : `<p>${escapeHtml(job.stage)} — ${escapeHtml(job.message)}</p>`;
+    return `<article class="job">
+      <header>
+        <h3>${escapeHtml(job.filename)} → ${escapeHtml(job.target)}</h3>
+        <span class="badge ${job.status}">${job.status} · ${job.elapsed}s</span>
+      </header>
+      ${body}
+    </article>`;
+  }).join("");
+
+  for (const holder of jobsEl.querySelectorAll("[data-preview]:empty")) {
+    fetch(holder.dataset.preview)
+      .then((r) => (r.ok ? r.text() : ""))
+      .then((svg) => { if (svg) holder.innerHTML = svg; });
+  }
+}
+
+{% if jobs %}
+{{ jobs | tojson }}.forEach(track);
+{% endif %}
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+services:
+  transposer:
+    build:
+      context: .
+      args:
+        # Audiveris' development branch tracks the newest JDK; pin both together
+        # if you need a specific release.
+        JDK_VERSION: "25"
+        AUDIVERIS_REF: "development"
+    image: transposer:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Uploads, intermediates and results. Recognised MusicXML lives here too,
+      # which is what you open in MuseScore to fix a wrong note.
+      - transposer-data:/data
+    environment:
+      # OMR is CPU-bound; two concurrent jobs is a sane default for a laptop.
+      TRANSPOSER_DATA_DIR: /data
+    restart: unless-stopped
+    # Audiveris asks the JVM for a few gigabytes on a dense page.
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+
+volumes:
+  transposer-data:

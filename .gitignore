@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# External engines fetched by scripts/
+third_party/
+
+# Working output
+data/
+*.pdf
+*.mxl
+*.musicxml
+!tests/**/*.musicxml
