@@ -40,7 +40,6 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TRANSPOSER_AUDIVERIS=/opt/audiveris/bin/Audiveris \
     TESSDATA_PREFIX=/opt/tessdata \
-    TRANSPOSER_MOZART_DIR=/opt/mozart \
     TRANSPOSER_DATA_DIR=/data
 
 # libcairo2 and the font stack are what CairoSVG needs to turn Verovio's SVG
@@ -49,10 +48,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
-      git \
       libcairo2 \
-      libgl1 \
-      libglib2.0-0 \
       fonts-dejavu-core \
       openjdk-${JDK_VERSION}-jre-headless \
       tesseract-ocr \
@@ -68,13 +64,14 @@ RUN mkdir -p /opt/tessdata \
  && curl -fsSLo /opt/tessdata/eng.traineddata \
       https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/eng.traineddata
 
-# The Mozart engine, for clean printed single-staff music.
-RUN git clone --depth 1 https://github.com/aashrafh/Mozart.git /opt/mozart
-
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir '.[web,mozart]'
+# Audiveris only. Mozart's extras -- scikit-learn, OpenCV, matplotlib -- are
+# about a gigabyte of wheels for an engine that handles clean single-staff
+# treble-clef music and that Audiveris beats everywhere it applies. Install with
+# '.[web,mozart]' and set TRANSPOSER_MOZART_DIR if you want it back.
+RUN pip install --no-cache-dir '.[web]'
 
 RUN mkdir -p /data
 VOLUME ["/data"]

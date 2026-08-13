@@ -71,8 +71,19 @@ jobs:
         id: calver
         run: |
           COMMIT_COUNT=$(git rev-list --count HEAD)
-          echo "version=$(date +'%y.%m.%d').${COMMIT_COUNT}" >> $GITHUB_OUTPUT
-          echo "sha7=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_OUTPUT
+          SHA7=$(echo ${GITHUB_SHA} | cut -c1-7)
+          VERSION=$(date +'%y.%m.%d').${COMMIT_COUNT}
+          IMAGE=ghcr.io/ollisulopuisto/modulaattori
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "sha7=${SHA7}" >> $GITHUB_OUTPUT
+          # :latest only ever means main. A manual branch build gets the version
+          # and sha tags, so it can be deployed to staging without becoming what
+          # anything pulling :latest receives.
+          TAGS="${IMAGE}:${VERSION},${IMAGE}:${SHA7}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
       # This builds Audiveris from source, so it is slow the first time and
       # mostly cache hits afterwards.
@@ -80,13 +91,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # A manual run pushes too, so a branch can be put on the staging slot
+          # and tried against a real scan before its PR is merged.
+          push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags: |
-            ghcr.io/ollisulopuisto/modulaattori:latest
-            ghcr.io/ollisulopuisto/modulaattori:${{ steps.calver.outputs.version }}
-            ghcr.io/ollisulopuisto/modulaattori:${{ steps.calver.outputs.sha7 }}
+          tags: ${{ steps.calver.outputs.tags }}
 
       - name: Create Git Tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
