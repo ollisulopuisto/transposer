@@ -45,7 +45,14 @@ mozart = [
 # The oemer deep-learning OMR engine (downloads ~200 MB of ONNX weights on
 # first run, from GitHub releases)
 oemer = ["oemer>=0.1.7"]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    # Starlette's TestClient needs this and does not declare it, so the web
+    # tests collect fine on a machine that happens to have it and fail on CI.
+    "httpx2>=0.1",
+]
 
 [project.scripts]
 transposer = "transposer.cli:main"
