@@ -23,8 +23,8 @@ from .cleanup import CleanupReport, clean_score, strip_credits
 from .errors import TransposerError
 from .ingest import DEFAULT_DPI, images_to_pdf, ingest, native_resolution
 from .keys import Direction
-from .preprocess import TARGET_INTERLINE, PreprocessReport, enhance_pages
 from .omr import OmrResult, select_engine
+from .preprocess import TARGET_INTERLINE, PreprocessReport, enhance_pages
 from .render import select_renderer
 from .render.base import RenderResult, resolve_page_size
 from .transpose import TranspositionReport, transpose_score

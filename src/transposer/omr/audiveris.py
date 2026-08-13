@@ -48,7 +48,11 @@ class AudiverisEngine(OmrEngine):
         self.launcher = str(launcher) if launcher else self._find_launcher()
         self.switches = {**_DEFAULT_SWITCHES, **(switches or {})}
         self.timeout = timeout
-        self.java_home = java_home or os.environ.get("TRANSPOSER_JAVA_HOME") or os.environ.get("JAVA_HOME")
+        self.java_home = (
+            java_home
+            or os.environ.get("TRANSPOSER_JAVA_HOME")
+            or os.environ.get("JAVA_HOME")
+        )
         self.tessdata = tessdata or os.environ.get("TESSDATA_PREFIX")
 
     # -- discovery ---------------------------------------------------------

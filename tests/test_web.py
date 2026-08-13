@@ -5,9 +5,9 @@ import pytest
 from music21.musicxml.m21ToXml import GeneralObjectExporter
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from transposer.web.app import create_app  # noqa: E402
+from transposer.web.app import create_app
 
 
 @pytest.fixture

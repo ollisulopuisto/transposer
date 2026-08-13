@@ -41,7 +41,12 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
         engines = [
-            {"name": engine.name, "description": engine.description, "ok": status.ok, "reason": status.reason}
+            {
+                "name": engine.name,
+                "description": engine.description,
+                "ok": status.ok,
+                "reason": status.reason,
+            }
             for engine, status in available_engines()
             if engine.name != "passthrough"
         ]

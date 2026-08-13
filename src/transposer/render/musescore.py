@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..errors import RenderFailedError
 from ..omr.base import Availability
-from .base import PageSize, RenderResult, Renderer
+from .base import PageSize, Renderer, RenderResult
 
 _BINARIES = ("mscore", "musescore", "mscore4portable", "musescore4", "musescore3", "mscore3")
 

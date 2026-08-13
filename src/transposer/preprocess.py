@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -93,9 +94,10 @@ def measure_staff_geometry(gray: np.ndarray) -> tuple[int | None, int | None]:
         for index in range(len(runs) - 1):
             value, length = runs[index]
             next_value, next_length = runs[index + 1]
-            if value and not next_value:  # black run followed by white run
-                if 0 < length <= 20 and 0 < next_length <= 80:
-                    pairs[(length, next_length)] += 1
+            # A black run followed by a white run: a staff line and the gap
+            # above the next one.
+            if value and not next_value and 0 < length <= 20 and 0 < next_length <= 80:
+                pairs[(length, next_length)] += 1
 
     if not pairs:
         return None, None
@@ -257,7 +259,7 @@ def _run_lengths(column: np.ndarray) -> list[tuple[bool, int]]:
     boundaries = np.concatenate(([0], changes, [column.size]))
     return [
         (bool(column[start]), int(end - start))
-        for start, end in zip(boundaries[:-1], boundaries[1:])
+        for start, end in pairwise(boundaries)
     ]
 
 

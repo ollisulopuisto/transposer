@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from music21 import clef, key, stream
 

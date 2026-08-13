@@ -83,11 +83,11 @@ def looks_like_chord_symbol(text: str) -> bool:
         return False
     # "Bb" is a chord; "Bed" is not -- reject suffixes that are pure lower-case
     # letters longer than the handful of real quality abbreviations.
-    if suffix.isalpha() and suffix.lower() not in {
-        "m", "maj", "min", "dim", "aug", "sus", "add", "mi", "ma",
-    }:
-        return False
-    return True
+    return not (
+        suffix.isalpha()
+        and suffix.lower()
+        not in {"m", "maj", "min", "dim", "aug", "sus", "add", "mi", "ma"}
+    )
 
 
 def transpose_chord_symbol_text(text: str, iv: interval.Interval) -> str:

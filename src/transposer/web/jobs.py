@@ -143,7 +143,7 @@ class JobStore:
                 job.status = "done"
                 job.stage = "done"
                 job.message = "finished"
-            except Exception as exc:  # noqa: BLE001 - the message goes to the UI
+            except Exception as exc:
                 job.status = "failed"
                 job.stage = "failed"
                 job.message = str(exc) or exc.__class__.__name__

@@ -35,6 +35,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -150,7 +151,7 @@ def find_staves(
     while index + 4 < len(lines):
         group = lines[index : index + 5]
         centres = [(start + end) / 2 for start, end in group]
-        gaps = [b - a for a, b in zip(centres, centres[1:])]
+        gaps = [b - a for a, b in pairwise(centres)]
         smallest, largest = min(gaps), max(gaps)
 
         if smallest > 0 and largest <= smallest * max_gap_ratio:
@@ -179,7 +180,10 @@ def _group_true_runs(flags: np.ndarray) -> list[tuple[int, int]]:
     """Return ``[(start, stop), ...]`` for each run of True, stop exclusive."""
     padded = np.concatenate(([False], flags, [False]))
     changes = np.flatnonzero(np.diff(padded))
-    return [(int(start), int(stop)) for start, stop in zip(changes[::2], changes[1::2])]
+    return [
+        (int(start), int(stop))
+        for start, stop in zip(changes[::2], changes[1::2], strict=False)
+    ]
 
 
 def _horizontal_extent(binary: np.ndarray, lines: list[tuple[int, int]]) -> tuple[int, int]:

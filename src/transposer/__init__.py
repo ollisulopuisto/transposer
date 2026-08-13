@@ -17,16 +17,16 @@ from .pipeline import PipelineOptions, PipelineResult, run
 from .transpose import transpose_score
 
 __all__ = [
-    "__version__",
-    "run",
+    "EngineUnavailableError",
+    "KeySpecError",
+    "OmrFailedError",
     "PipelineOptions",
     "PipelineResult",
-    "transpose_score",
-    "parse_target",
+    "RenderFailedError",
     "TransposerError",
     "UnsupportedInputError",
-    "EngineUnavailableError",
-    "OmrFailedError",
-    "RenderFailedError",
-    "KeySpecError",
+    "__version__",
+    "parse_target",
+    "run",
+    "transpose_score",
 ]

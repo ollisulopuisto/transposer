@@ -15,9 +15,9 @@ from . import __version__
 from .chordband import MIN_CONFIDENCE
 from .errors import TransposerError
 from .ingest import DEFAULT_DPI
-from .preprocess import TARGET_INTERLINE
 from .omr import describe_engines
 from .pipeline import PipelineOptions, run
+from .preprocess import TARGET_INTERLINE
 from .render import describe_renderers
 from .transpose import INSTRUMENT_TRANSPOSITIONS
 

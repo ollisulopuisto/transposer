@@ -9,7 +9,6 @@ from transposer.transpose import (
     transpose_score,
 )
 
-
 DEFAULT_NOTES = [("E-4", 1.0), ("F4", 1.0), ("G4", 1.0), ("A-4", 1.0), ("B-3", 4.0)]
 
 
@@ -88,7 +87,7 @@ def test_in_place_transposition_mutates():
     score = make_score()
     result, _ = transpose_score(score, "C", in_place=True)
     assert result is score
-    assert [n.nameWithOctave for n in score.recurse().notes][0] == "C4"
+    assert next(n.nameWithOctave for n in score.recurse().notes) == "C4"
 
 
 def test_chord_symbols_follow_the_notes():
@@ -103,7 +102,7 @@ def test_chord_symbols_follow_the_notes():
 def test_interval_targets_need_no_key_analysis():
     result, report = transpose_score(make_score(), "+M2")
     assert report.interval.directedName == "M2"
-    assert [n.nameWithOctave for n in result.recurse().notes][0] == "F4"
+    assert next(n.nameWithOctave for n in result.recurse().notes) == "F4"
 
 
 def test_octave_shift_applies_on_top_of_a_key_target():
@@ -152,7 +151,8 @@ def test_text_chord_symbols_are_transposed_too():
     part.insert(4, m21.expressions.TextExpression("Somewhere"))
 
     result, report = transpose_score(score, "C")
-    contents = [t.content for t in result.recurse().getElementsByClass(m21.expressions.TextExpression)]
+    texts = result.recurse().getElementsByClass(m21.expressions.TextExpression)
+    contents = [t.content for t in texts]
 
     assert report.text_chords_moved == 1
     assert "G7" in contents
@@ -163,7 +163,8 @@ def test_text_chords_can_be_left_alone():
     score = make_score()
     score.parts[0].insert(0, m21.expressions.TextExpression("B-7"))
     result, report = transpose_score(score, "C", transpose_text_chords=False)
-    contents = [t.content for t in result.recurse().getElementsByClass(m21.expressions.TextExpression)]
+    texts = result.recurse().getElementsByClass(m21.expressions.TextExpression)
+    contents = [t.content for t in texts]
     assert report.text_chords_moved == 0
     assert "B-7" in contents
 

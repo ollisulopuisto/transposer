@@ -15,7 +15,7 @@ from pathlib import Path
 from ..errors import RenderFailedError
 from ..ingest import merge_pdfs
 from ..omr.base import Availability
-from .base import PageSize, RenderResult, Renderer
+from .base import PageSize, Renderer, RenderResult
 
 #: Verovio options that make a page look like sheet music rather than a demo.
 _BASE_OPTIONS: dict[str, object] = {

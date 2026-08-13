@@ -122,7 +122,7 @@ def test_band_sits_above_the_staff_and_clear_of_the_one_before():
     staves = chordband.find_staves(page)
     boxes = [chordband.band_box(staves, index) for index in range(len(staves))]
 
-    for staff, (_, top, _, bottom) in zip(staves, boxes):
+    for staff, (_, top, _, bottom) in zip(staves, boxes, strict=True):
         assert bottom <= staff.top
         assert top < bottom
 
@@ -133,7 +133,7 @@ def test_band_sits_above_the_staff_and_clear_of_the_one_before():
 def test_band_is_clipped_at_the_top_of_the_page():
     page = as_array(draw_page(interline=20, staves=1, margin=8))
     staves = chordband.find_staves(page)
-    left, top, right, bottom = chordband.band_box(staves, 0)
+    left, top, right, _bottom = chordband.band_box(staves, 0)
     assert top >= 0
     assert left >= 0
     assert right <= page.shape[1]
@@ -149,7 +149,7 @@ def test_finds_the_barlines_that_were_drawn():
 
     expected = [80 + round(index * (1400 - 160) / 4) for index in range(5)]
     assert len(barlines) == len(expected)
-    for found, want in zip(barlines, expected):
+    for found, want in zip(barlines, expected, strict=True):
         assert found == pytest.approx(want, abs=4)
 
 

@@ -18,7 +18,7 @@ class PageSize:
     width: int
     height: int
 
-    def landscape(self) -> "PageSize":
+    def landscape(self) -> PageSize:
         return PageSize(f"{self.name}-landscape", self.height, self.width)
 
     @property

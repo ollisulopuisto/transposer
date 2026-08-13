@@ -112,7 +112,8 @@ def test_dropping_unreadable_text_spares_chord_symbols():
     score.append(part)
 
     assert drop_unparsed_text(score) == 1
-    remaining = [t.content for t in score.recurse().getElementsByClass(m21.expressions.TextExpression)]
+    texts = score.recurse().getElementsByClass(m21.expressions.TextExpression)
+    remaining = [t.content for t in texts]
     assert remaining == ["Bb7"]
 
 

@@ -229,7 +229,6 @@ def plan_interval(
     else:
         base = spec.interval
         if octave_shift:
-            base = interval.Interval(noteStart=base.noteStart, noteEnd=base.noteEnd) if False else base
             base = _add_octaves(base, octave_shift)
         target_key = transposed_key(source_key, base) if source_key else None
 

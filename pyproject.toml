@@ -45,7 +45,7 @@ mozart = [
 # The oemer deep-learning OMR engine (downloads ~200 MB of ONNX weights on
 # first run, from GitHub releases)
 oemer = ["oemer>=0.1.7"]
-dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [project.scripts]
 transposer = "transposer.cli:main"
@@ -58,6 +58,39 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 transposer = ["web/templates/*.html", "web/static/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Broad on correctness and hygiene, quiet on house style. The point is catching
+# defects, not enforcing one formatter's taste.
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "B",         # bugbear: mutable defaults, shadowed loop vars, bare zip
+    "UP",        # pyupgrade
+    "SIM",       # simplifiable constructs
+    "C4",        # comprehensions
+    "RET",       # return-path mistakes
+    "PTH",       # os.path calls that should be pathlib
+    "A",         # shadowed builtins
+    "PIE", "RSE", "RUF",
+]
+ignore = [
+    # Deliberate: the OCR confusion tables are *made of* characters that look
+    # like other characters. Flagging them defeats the point of the module.
+    "RUF001", "RUF002", "RUF003",
+    # A pipeline stage legitimately takes arguments it does not use, because
+    # the stages share one signature.
+    "ARG002",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into the modules they test.
+"tests/*" = ["ARG001", "ARG005"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

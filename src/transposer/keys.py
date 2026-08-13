@@ -109,7 +109,8 @@ def parse_target(spec: str) -> TargetSpec:
     m = _SEMITONE_RE.match(text)
     if m:
         value = int(m.group("value"))
-        sign = -1 if (m.group("sign") == "-" or (m.group("word") or "").lower() in {"down", "alas"}) else 1
+        downward = m.group("sign") == "-" or (m.group("word") or "").lower() in {"down", "alas"}
+        sign = -1 if downward else 1
         return TargetSpec(raw=text, interval=interval.Interval(sign * value))
 
     # Named intervals, e.g. "M3", "-m6", "+P5".

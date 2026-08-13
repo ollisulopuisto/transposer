@@ -7,7 +7,7 @@ engine (which probes the filesystem and the environment) only happens on demand.
 
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from ..errors import EngineUnavailableError
 from ..ingest import IngestedInput
@@ -18,16 +18,16 @@ from .oemer import OemerEngine
 from .passthrough import PassthroughEngine
 
 __all__ = [
-    "Availability",
-    "OmrEngine",
-    "OmrResult",
+    "ENGINES",
     "AudiverisEngine",
+    "Availability",
     "MozartEngine",
     "OemerEngine",
+    "OmrEngine",
+    "OmrResult",
     "PassthroughEngine",
-    "ENGINES",
-    "get_engine",
     "available_engines",
+    "get_engine",
     "select_engine",
 ]
 
