@@ -6,11 +6,16 @@
 #     docker build -t transposer .
 #     docker run --rm -p 8000:8000 transposer
 #
-# Audiveris' JDK requirement moves with its development branch; override with
-# --build-arg AUDIVERIS_REF=5.7.1 and a matching JDK if the default drifts.
+# Pin a release, not a branch. The development branch built fine and then died
+# in batch mode -- Scale's static initialiser asks the Swing application
+# framework for an instance that only exists once a GUI has launched, so every
+# headless run threw "Application is not launched" before reading a note.
+#
+# Audiveris' JDK requirement moves with its releases: 5.11.0 wants 25. Override
+# both together with --build-arg if you move the pin.
 
 ARG JDK_VERSION=25
-ARG AUDIVERIS_REF=development
+ARG AUDIVERIS_REF=5.11.0
 
 # --------------------------------------------------------------------------
 # Stage 1: build Audiveris

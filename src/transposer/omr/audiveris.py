@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from ..errors import OmrFailedError
@@ -44,6 +45,7 @@ class AudiverisEngine(OmrEngine):
         timeout: int = 3600,
         java_home: str | None = None,
         tessdata: str | None = None,
+        probe_timeout: int = 60,
     ) -> None:
         self.launcher = str(launcher) if launcher else self._find_launcher()
         self.switches = {**_DEFAULT_SWITCHES, **(switches or {})}
@@ -54,6 +56,44 @@ class AudiverisEngine(OmrEngine):
             or os.environ.get("JAVA_HOME")
         )
         self.tessdata = tessdata or os.environ.get("TESSDATA_PREFIX")
+        self.probe_timeout = probe_timeout
+        self._probed: Availability | None = None
+
+    # -- the environment the JVM runs in -----------------------------------
+
+    def build_env(self) -> dict[str, str]:
+        """The environment Audiveris is launched with.
+
+        Two of these are load-bearing on a headless Linux box.
+
+        ``sun.java2d.uiScale`` stops Audiveris probing the monitor's scaling
+        factor, which it does on Linux from a static initialiser, through GTK,
+        via JNA -- and which it guards with ``catch (Exception)``. A missing
+        libgtk-3 raises ``UnsatisfiedLinkError``, an Error rather than an
+        Exception, so the guard does not catch it and the process dies before
+        reading a note. Setting the scale makes it return before it looks.
+        ``GDK_SCALE`` is the same escape hatch one branch earlier.
+
+        Anything the user already put in ``JAVA_OPTS`` is kept: theirs come
+        first, and a heap size they chose wins, since a later ``-Xmx`` would
+        override an earlier one.
+        """
+        env = os.environ.copy()
+
+        existing = env.get("JAVA_OPTS", "").strip()
+        options = [existing] if existing else []
+        options.append("-Djava.awt.headless=true")
+        options.append("-Dsun.java2d.uiScale=1")
+        if "-Xmx" not in existing:
+            options.append("-Xmx4g")
+        env["JAVA_OPTS"] = " ".join(options)
+
+        env.setdefault("GDK_SCALE", "1")
+        if self.java_home:
+            env["JAVA_HOME"] = self.java_home
+        if self.tessdata:
+            env["TESSDATA_PREFIX"] = self.tessdata
+        return env
 
     # -- discovery ---------------------------------------------------------
 
@@ -75,6 +115,14 @@ class AudiverisEngine(OmrEngine):
         return None
 
     def availability(self) -> Availability:
+        """Whether Audiveris is here *and* can start.
+
+        Asking only whether the launcher exists is not enough, and the gap is
+        not theoretical: an image shipped reporting Audiveris ``[ok]`` while
+        every recognition failed, because the JVM died in a static initialiser
+        the moment it ran. So the launcher is actually started once, and what it
+        says on the way down is what the user is told.
+        """
         if not self.launcher:
             return Availability(
                 False,
@@ -83,6 +131,45 @@ class AudiverisEngine(OmrEngine):
             )
         if not Path(self.launcher).is_file() and not shutil.which(self.launcher):
             return Availability(False, f"{self.launcher} is not executable")
+
+        if self._probed is None:
+            self._probed = self._probe()
+        return self._probed
+
+    def _probe(self) -> Availability:
+        """Start the launcher once and see whether it comes up.
+
+        ``-help`` is enough: the initialisers that fail run before the CLI is
+        parsed, so a JVM that cannot start cannot print a usage message either.
+        The result is cached per engine instance, because ``transposer engines``
+        and the web UI's health check both ask and neither wants a JVM each
+        time.
+        """
+        try:
+            completed = subprocess.run(
+                [self.launcher, "-help"],
+                capture_output=True,
+                text=True,
+                timeout=self.probe_timeout,
+                env=self.build_env(),
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return Availability(
+                False,
+                f"{self.launcher} did not respond within {self.probe_timeout}s; "
+                "it may be waiting for a display or a lock.",
+            )
+        except OSError as exc:
+            return Availability(False, f"{self.launcher} could not be run: {exc}")
+
+        if completed.returncode != 0:
+            detail = _tail((completed.stderr or completed.stdout or "").strip(), 6)
+            return Availability(
+                False,
+                "Audiveris is installed but fails to start:\n"
+                + (detail or f"exit status {completed.returncode}"),
+            )
         return Availability(True, version="5.x")
 
     # -- recognition -------------------------------------------------------
@@ -112,14 +199,7 @@ class AudiverisEngine(OmrEngine):
             command += ["-option", f"{_SWITCH_PREFIX}.{switch}={value}"]
         command += ["--", str(target)]
 
-        env = os.environ.copy()
-        env.setdefault("JAVA_OPTS", "-Djava.awt.headless=true -Xmx4g")
-        if self.java_home:
-            env["JAVA_HOME"] = self.java_home
-        if self.tessdata:
-            env["TESSDATA_PREFIX"] = self.tessdata
-
-        completed = self._run(command, env=env, timeout=self.timeout)
+        completed = self._run(command, env=self.build_env(), timeout=self.timeout)
         log = (completed.stdout or "") + (completed.stderr or "")
 
         exported = sorted(out_dir.glob("*.mxl")) + sorted(out_dir.glob("*.xml"))
