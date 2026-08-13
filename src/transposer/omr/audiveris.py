@@ -89,8 +89,10 @@ class AudiverisEngine(OmrEngine):
         out_dir = Path(workdir) / "audiveris"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Audiveris reads PDFs natively and does a better job with the original
-        # vector/greyscale data than with our rasterised pages.
+        # Audiveris reads PDFs natively, and the preprocessing pass hands back
+        # an enhanced PDF when it ran -- so ``source.path`` is already the best
+        # available version either way. A bare image still has to be rasterised
+        # to normalise its colour depth.
         target = source.path
         if source.kind == "image":
             target = source.rasterize()[0]

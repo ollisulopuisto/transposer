@@ -85,6 +85,8 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
         dpi: int = Form(DEFAULT_DPI),
         drop_text: bool = Form(False),
         key_changes: str = Form("auto"),
+        binarize: bool = Form(False),
+        chord_pass: bool = Form(False),
     ) -> JSONResponse:
         data = await file.read()
         if not data:
@@ -112,6 +114,8 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
             dpi=max(72, min(600, dpi)),
             drop_text=drop_text,
             key_changes=key_changes if key_changes in {"auto", "keep", "drop"} else "auto",
+            binarize=binarize,
+            chord_pass=chord_pass,
         )
 
         job = store.submit(file.filename or "upload", data, options)

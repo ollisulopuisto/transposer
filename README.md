@@ -14,7 +14,7 @@ transposer transpose rainbow.pdf --to C -o rainbow-in-C.pdf
 ```
 engine     : audiveris
 renderer   : verovio (1 page(s))
-transposed : E- major → C major (m-3, -3 semitones); source key signature; 95 notes; 2 chord symbols
+transposed : E- major → C major (m-3, -3 semitones); source key signature; 108 notes; 12 chord symbols
 pdf        : rainbow-in-C.pdf
 musicxml   : /tmp/transposer-xyz/transposed.musicxml
 ```
@@ -27,9 +27,11 @@ There is also a web UI (`transposer serve`) and a Docker image.
 * **Recognises** the music with a pluggable OMR backend — Audiveris, oemer or
   Mozart, whichever is installed.
 * **Repairs** the mistakes OMR reliably makes, and tells you about each one.
+* **Measures** the staff-line spacing and scales the page to what the engine
+  wants, instead of guessing at a dpi number.
 * **Transposes** notes, key signatures, chord symbols, and chord names that OMR
-  left as plain text. Target a key (`C`, `F#m`, `Bb major`, `C-duuri`) or an
-  interval (`-M3`, `+5`).
+  left as plain text — including ones it mangled into `Fm?` or `CT`. Target a
+  key (`C`, `F#m`, `Bb major`, `C-duuri`) or an interval (`-M3`, `+5`).
 * **Writes for transposing instruments** — ask for concert C and get D for a
   B♭ trumpet.
 * **Engraves** a fresh PDF with Verovio, or MuseScore if you have it.
@@ -143,6 +145,9 @@ transposer transpose scan.pdf --to C --octave -1
 # Written for a transposing instrument: sounds in C, reads in D
 transposer transpose scan.pdf --to C --for-instrument bb-trumpet
 
+# A chord chart: two recognition passes, chords merged from the sharper one
+transposer transpose chart.pdf --to C --chord-pass
+
 # Page and engraving
 transposer transpose scan.pdf --to C --paper letter --scale 45 --landscape
 
@@ -184,6 +189,79 @@ for warning in result.warnings:
     print("!", warning)
 ```
 
+## Resolution, and what preprocessing can and cannot do
+
+Recognition quality is governed less by a scan's nominal dpi than by one
+number: **interline**, the staff-line spacing in pixels. Audiveris' filters are
+written in fractions of interline and assume roughly 20; Tesseract wants text
+around 30 pixels tall. A page that is geometrically fine at 144 dpi can still
+have an interline of 7, and at that size everything downstream works near its
+rounding limits.
+
+So `transposer` does not resample to a dpi figure. It *measures* the interline
+and scales to hit a target — the same decision a person makes when they zoom a
+scan until the staff looks right. It also reads a scanned PDF at the resolution
+the scan actually holds, because rendering a 144 dpi image at 300 dpi
+interpolates once and then the enhancement pass interpolates again.
+
+```
+enhanced page 1: interline 7px → 20px; scale 2.86x; 833×1079 → 2380×3083;
+                 steps: autocontrast, upscale 2.86x (Lanczos), unsharp mask
+```
+
+Be clear about the ceiling: **upscaling invents nothing.** A 144 dpi scan holds
+144 dpi of detail whatever you do to it. What preprocessing buys is putting the
+detail that *is* there onto a grid the downstream code handles well, and undoing
+the blur that resampling introduces. On a real 144 dpi lead-sheet scan
+(interline 7px, 33 chord symbols), measured against Audiveris:
+
+| Input | Notes | Chord symbols recovered |
+|---|---|---|
+| 144 dpi as scanned | recognition failed outright | — |
+| blind `--dpi 400` upscale | 177 | 2 |
+| measured scale to interline 20 | 189 | 7 |
+| the same, binarised | 134 | 10 |
+| **+ chord repair, two passes** | **108 notes in one part** | **11, all correct** |
+
+The relevant flags:
+
+| Flag | Effect |
+|---|---|
+| `--target-interline N` | staff spacing to scale to (default 20); matters far more than dpi |
+| `--binarize` | sharper text, softer noteheads: better chords, worse notes |
+| `--chord-pass` | run recognition twice and take chords from the binarised pass |
+| `--no-preprocess` | hand the scan to the engine untouched |
+| `--no-deskew`, `--no-sharpen` | turn off individual steps |
+
+## Chord symbols
+
+On a lead sheet the chord symbols are the point, and they are what OCR handles
+worst. Audiveris drives Tesseract's *legacy* engine, which on chart fonts
+confuses a small, stable set of glyphs:
+
+```
+Fm7 -> Fm?      C7 -> CT       Am7 -> Am?
+Bb7 -> BW       Eb -> E'P      Gm7 -> Gm"!
+```
+
+What matters is what is *right* in that list: the root letter survives and the
+symbol is in the correct place. Only the quality suffix is scrambled. So
+`transposer` re-spells rather than re-detects — it matches the suffix against
+the qualities that appear on real charts, under an edit distance where known
+OCR confusions are cheap and everything else is expensive.
+
+Roots are never guessed. Misreading a root transposes to the wrong chord, which
+is worse than no chord at all, so a symbol whose first character is not a
+literal A–G is left as text. Text that repairs confidently is promoted to a real
+MusicXML `<harmony>` element, which means it transposes as harmony — root, bass
+and quality together — and engraves in chord-symbol style.
+
+On the scan above this took chord recovery from 2 symbols to 11, with no false
+positives: 30 lines of surrounding prose (`Somewhere`, `poco rit.`,
+`Harold Arlen`, `D.C. al Fine`) were all correctly rejected.
+
+`--no-chord-repair` turns it off.
+
 ## Reading the output critically
 
 OMR is not a solved problem, and the honest workflow is *recognise, then check*.
@@ -194,6 +272,7 @@ The cleanup pass fixes the mistakes that recur on almost every scan:
 
 | Mistake | What happens without a fix | Flag |
 |---|---|---|
+| Chord symbols mangled by OCR | chart transposes with the wrong chords | `--no-chord-repair` |
 | A plain treble clef read as treble-8vb | the whole part sounds an octave low | `--keep-clefs` to disable |
 | A one- or two-bar "modulation" from a smudge | transposition propagates a wrong key | `--key-changes keep\|drop\|auto` |
 | Lyrics that failed to attach to notes | garbled text piles up over the staff | `--drop-text` to delete it |
@@ -204,13 +283,6 @@ What it does **not** fix, because no heuristic can: wrong notes. If the engine
 misread a bar, the transposition faithfully moves the wrong notes. Watch for
 `Audiveris flagged N measure(s) whose rhythm did not add up` — those bars are the
 ones to check first.
-
-Text recognition is the weakest link, and it is resolution-bound. A scan whose
-embedded image is around 100 dpi will produce readable noteheads and unreadable
-lyrics; `Fm7` becomes `Fm?` and `C7` becomes `CT`. Chord names that survive as
-text are still transposed correctly (`Bb7` → `G7`) — but a chord name the OCR got
-wrong stays wrong. Use `--dpi 400` on low-resolution input, and expect to fix
-chord symbols by hand on anything below about 200 dpi.
 
 ## Transposition details
 
@@ -256,8 +328,10 @@ Layout:
 ```
 src/transposer/
   keys.py            target parsing, interval resolution
+  preprocess.py      staff measurement, deskew, scaling, sharpening
   transpose.py       key detection, transposition, reporting
   chordtext.py       chord symbols that arrived as plain text
+  chordocr.py        re-spelling chord symbols OCR mangled
   cleanup.py         repairs for common OMR mistakes
   ingest.py          input normalisation, PDF rasterising, PDF merging
   pipeline.py        the end-to-end job

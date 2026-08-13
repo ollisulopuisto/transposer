@@ -8,6 +8,8 @@ then concatenated.
 
 from __future__ import annotations
 
+import re
+from functools import lru_cache
 from pathlib import Path
 
 from ..errors import RenderFailedError
@@ -31,6 +33,77 @@ _BASE_OPTIONS: dict[str, object] = {
     "spacingLinear": 0.25,
     "spacingNonLinear": 0.6,
 }
+
+
+#: Verovio draws the accidental inside a chord symbol as a character from its
+#: music font rather than as a path, and CairoSVG has no music font to resolve
+#: it with -- so "F#m7" comes out as "F□m7". These are the plain Unicode
+#: equivalents, keyed by Verovio's own glyph names so the mapping survives a
+#: change of music font.
+_TEXT_GLYPH_EQUIVALENTS = {
+    "figbassFlat": "♭",
+    "figbassDoubleFlat": "♭♭",
+    "figbassNatural": "♮",
+    "figbassSharp": "♯",
+    "figbassDoubleSharp": "♯♯",
+    "accidentalFlat": "♭",
+    "accidentalDoubleFlat": "♭♭",
+    "accidentalNatural": "♮",
+    "accidentalSharp": "♯",
+    "accidentalDoubleSharp": "♯♯",
+    "csymDiminished": "°",
+    "csymHalfDiminished": "ø",
+    "csymAugmented": "+",
+    "csymMajorSeventh": "∆",
+    "csymMinor": "-",
+}
+
+#: A music-font accidental is drawn much larger than the text beside it; a
+#: text accidental at the same size would tower over the chord name.
+_TEXT_GLYPH_SCALE = 0.55
+
+_MUSIC_TSPAN = re.compile(
+    r'<tspan font-family="(?P<font>[^"]+)" font-size="(?P<size>[\d.]+)px">'
+    r"(?P<glyph>[^<]*)</tspan>"
+)
+
+
+@lru_cache(maxsize=8)
+def _glyph_names(font: str) -> dict[str, str]:
+    """Map codepoint (hex) to glyph name, from the font's own metadata."""
+    from importlib.resources import files
+
+    try:
+        source = (files("verovio") / "data" / f"{font}.xml").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return {}
+    return dict(re.findall(r'<g c="([0-9A-Fa-f]{4})"[^>]*?n="([^"]+)"', source))
+
+
+def substitute_text_glyphs(svg: str) -> str:
+    """Replace music-font characters in text runs with Unicode equivalents.
+
+    Only affects ``<tspan>``s that name a font family -- the notes, clefs and
+    staff accidentals are drawn as paths and are untouched.
+    """
+
+    def replace(match: re.Match) -> str:
+        glyph = match.group("glyph")
+        if len(glyph) != 1:
+            return match.group(0)
+
+        names = _glyph_names(match.group("font"))
+        name = names.get(f"{ord(glyph):04X}")
+        equivalent = _TEXT_GLYPH_EQUIVALENTS.get(name or "")
+        if equivalent is None:
+            return match.group(0)
+
+        size = float(match.group("size")) * _TEXT_GLYPH_SCALE
+        return f'<tspan font-size="{size:.0f}px">{equivalent}</tspan>'
+
+    return _MUSIC_TSPAN.sub(replace, svg)
 
 
 def _ensure_resources(verovio) -> None:
@@ -107,7 +180,7 @@ class VerovioRenderer(Renderer):
         pdf_pages: list[Path] = []
 
         for index in range(1, page_count + 1):
-            svg = toolkit.renderToSVG(index)
+            svg = substitute_text_glyphs(toolkit.renderToSVG(index))
             svg_path = workdir / f"page-{index:03d}.svg"
             svg_path.write_text(svg, encoding="utf-8")
             svg_pages.append(svg_path)

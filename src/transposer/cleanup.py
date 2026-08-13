@@ -3,6 +3,8 @@
 OMR output is never clean, but its mistakes are not random -- a handful of them
 show up on almost every scan, and each has a safe automatic fix:
 
+* chord symbols the text recogniser mangled into ``Fm?`` or ``CT``, which on a
+  lead sheet are the whole point (see :mod:`transposer.chordocr`),
 * a plain treble clef read as an octave-displaced one, which silently moves a
   whole part an octave,
 * a one- or two-bar "modulation" caused by a smudge next to a barline, which a
@@ -30,6 +32,7 @@ from music21 import clef, key, stream
 class CleanupReport:
     """What the cleanup passes changed."""
 
+    chords_promoted: int = 0
     clefs_flattened: int = 0
     key_changes_dropped: int = 0
     credits_removed: int = 0
@@ -39,7 +42,8 @@ class CleanupReport:
     @property
     def changed(self) -> bool:
         return bool(
-            self.clefs_flattened
+            self.chords_promoted
+            or self.clefs_flattened
             or self.key_changes_dropped
             or self.credits_removed
             or self.text_removed
@@ -281,9 +285,21 @@ def clean_score(
     key_changes: str = "auto",
     drop_text: bool = False,
     fix_metadata: bool = True,
+    repair_chords: bool = True,
 ) -> CleanupReport:
     """Run the in-memory cleanup passes and report what changed."""
     report = CleanupReport()
+
+    if repair_chords:
+        from .chordocr import promote_chord_symbols
+
+        report.chords_promoted, chord_notes = promote_chord_symbols(score)
+        if report.chords_promoted:
+            report.notes.append(
+                f"recovered {report.chords_promoted} chord symbol(s) from text the "
+                "recogniser could not parse"
+            )
+            report.notes.extend(chord_notes)
 
     if plain_clefs:
         report.clefs_flattened = flatten_octave_clefs(score)

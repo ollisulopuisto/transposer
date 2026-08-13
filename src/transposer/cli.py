@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__
 from .errors import TransposerError
 from .ingest import DEFAULT_DPI
+from .preprocess import TARGET_INTERLINE
 from .omr import describe_engines
 from .pipeline import PipelineOptions, run
 from .render import describe_renderers
@@ -135,6 +136,54 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     transpose.add_argument(
+        "--no-preprocess",
+        dest="preprocess",
+        action="store_false",
+        help="skip image enhancement and hand the scan to the engine as-is",
+    )
+    transpose.add_argument(
+        "--target-interline",
+        type=int,
+        default=TARGET_INTERLINE,
+        help=(
+            "staff-line spacing in pixels to scale the scan to before "
+            f"recognition (default: {TARGET_INTERLINE}); this matters far more "
+            "than dpi"
+        ),
+    )
+    transpose.add_argument(
+        "--binarize",
+        action="store_true",
+        help="binarise the page: better chord and lyric OCR, worse notehead detection",
+    )
+    transpose.add_argument(
+        "--no-deskew",
+        dest="deskew",
+        action="store_false",
+        help="do not straighten the page before recognition",
+    )
+    transpose.add_argument(
+        "--no-sharpen",
+        dest="sharpen",
+        action="store_false",
+        help="do not sharpen after upscaling",
+    )
+    transpose.add_argument(
+        "--chord-pass",
+        action="store_true",
+        help=(
+            "run recognition twice -- once for notes, once binarised for chord "
+            "symbols -- and merge the chords. Doubles the recognition time and "
+            "is worth it on a chord chart."
+        ),
+    )
+    transpose.add_argument(
+        "--no-chord-repair",
+        dest="repair_chords",
+        action="store_false",
+        help="do not re-spell chord symbols the text recogniser mangled",
+    )
+    transpose.add_argument(
         "--drop-text",
         action="store_true",
         help="delete floating text that OMR could not read (garbled lyrics)",
@@ -221,6 +270,13 @@ def _cmd_transpose(args: argparse.Namespace) -> int:
         key_changes=args.key_changes,
         drop_text=args.drop_text,
         strip_credits=args.strip_credits,
+        repair_chords=args.repair_chords,
+        chord_pass=args.chord_pass,
+        preprocess=args.preprocess,
+        target_interline=args.target_interline,
+        deskew=args.deskew,
+        sharpen=args.sharpen,
+        binarize=args.binarize,
         paper=args.paper,
         landscape=args.landscape,
         scale=args.scale,

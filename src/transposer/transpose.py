@@ -105,11 +105,7 @@ def detect_key(score: stream.Score | stream.Stream) -> tuple[key.Key | None, str
         if isinstance(candidate, key.Key):
             return candidate, "notated"
 
-    analysed: key.Key | None = None
-    try:
-        analysed = score.analyze("key")
-    except Exception:  # pragma: no cover - analysis needs pitches to chew on
-        analysed = None
+    analysed = _analyze_key(score)
 
     if signatures:
         signature = signatures[0]
@@ -124,6 +120,61 @@ def detect_key(score: stream.Score | stream.Stream) -> tuple[key.Key | None, str
         return analysed, "analysed"
 
     return None, "unknown"
+
+
+def _match_mode_to_target(
+    source: key.Key, target: key.Key, warnings: list[str]
+) -> key.Key:
+    """Resolve a relative-key ambiguity using the mode the user asked for.
+
+    E flat major and C minor are the same three flats on the page, and telling
+    them apart from pitch content alone is genuinely hard -- a piece that ends
+    on its tonic minor chord will analyse as the minor whatever the composer
+    thought. That ambiguity is harmless until someone asks for "C": read the
+    source as C minor and the request is a no-op, read it as E flat major and it
+    is a minor third down.
+
+    The target's mode is the missing information. When the source's relative key
+    has the mode that was asked for, and the two spell the same key signature,
+    that reading is the one the user meant.
+    """
+    if source.mode == target.mode:
+        return source
+
+    relative = source.relative
+    if relative.mode != target.mode or relative.sharps != source.sharps:
+        return source
+
+    warnings.append(
+        f"the key signature reads as either {source.name} or {relative.name}; "
+        f"a {target.mode} target was requested, so it was taken as {relative.name}"
+    )
+    return relative
+
+
+def _analyze_key(score: stream.Stream) -> key.Key | None:
+    """Guess a key from the notes, ignoring chord symbols.
+
+    music21's key analysis weighs every pitched object it finds, and a
+    :class:`~music21.harmony.ChordSymbol` is a chord as far as it is concerned.
+    Letting the chart's own chord spellings vote turns the analysis into a
+    partial restatement of itself, and on a lead sheet it is enough to tip a
+    major piece into its relative minor.
+    """
+    try:
+        melodic = copy.deepcopy(score)
+    except Exception:  # pragma: no cover - deepcopy of exotic streams
+        melodic = score
+    else:
+        for symbol in list(melodic.recurse().getElementsByClass(harmony.Harmony)):
+            holder = symbol.activeSite
+            if holder is not None:
+                holder.remove(symbol)
+
+    try:
+        return melodic.analyze("key")
+    except Exception:  # pragma: no cover - analysis needs pitches to chew on
+        return None
 
 
 def resolve_instrument(name: str | None) -> tuple[str | None, interval.Interval | None]:
@@ -162,6 +213,9 @@ def plan_interval(
                 "the score carries no key signature; the source key was guessed "
                 f"from its pitches as {source_key.name}"
             )
+
+        source_key = _match_mode_to_target(source_key, spec.key, warnings)
+
         base = interval_between_keys(
             source_key, spec.key, direction=direction, octave_shift=octave_shift
         )
