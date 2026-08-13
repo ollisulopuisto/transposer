@@ -83,8 +83,16 @@ _MAX_TOTAL_COST = 1.0
 _MIN_MARGIN = 0.15
 
 _ROOTS = set("ABCDEFG")
+#: Shapes a flat or a sharp comes back as. The flat glyph is a small hook over
+#: a stem, and at chart size both OCR engines resolve it to one of these.
+#:
+#: "r" is deliberately absent. It is a plausible flat *and* the commonest
+#: misread of "m", and the text alone cannot settle which -- so it stays a
+#: minor, because Gm7 is far commoner on a chart than Gb7. That is a real
+#: source of wrong chords, which is why every changed spelling is reported.
 _ACCIDENTAL_FOR = {
     "b": "b", "B": "b", "P": "b", "W": "b", "6": "b", "&": "b",
+    "v": "b", "V": "b", "Y": "b",
     "#": "#", "H": "#", "+": "#",
     "♭": "b", "♯": "#", "-": "b",
 }

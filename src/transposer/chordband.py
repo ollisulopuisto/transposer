@@ -42,10 +42,17 @@ import numpy as np
 
 from .chordocr import chord_symbol, repair_chord_symbol
 
-#: Characters a chord symbol can be made of. Restricting the LSTM's output
-#: alphabet is worth more here than it would be on prose: the band contains
-#: almost nothing else, and it stops "Bb" coming back as "Bb." or "8b".
-CHORD_WHITELIST = "ABCDEFGabdefgijmnorsu#0123456789+-/()°ø"
+#: No character whitelist by default, and that is deliberate.
+#:
+#: Restricting Tesseract's output alphabet to the characters a chord symbol is
+#: *spelled* with looks obviously right and is exactly wrong: it forbids the
+#: characters the repair pass decodes. A flat comes back as P, v or Y; a seven
+#: as T or /. :mod:`transposer.chordocr` maps those back, and a whitelist
+#: removes the evidence before it can. On a real engraved chart in E flat it
+#: cost every flat chord on the page.
+#:
+#: Pass a string to ``read_page`` to restrict the alphabet anyway.
+CHORD_WHITELIST: str | None = None
 
 #: Tesseract page segmentation modes to try, in order. A chord band is one line
 #: of sparse text, and which of these reads it better depends on how far apart
@@ -58,7 +65,13 @@ PAGE_SEGMENTATION_MODES = (7, 11)
 MIN_CONFIDENCE = 30.0
 
 #: How tall the chord band is, in interlines above the top staff line.
-BAND_HEIGHT = 2.6
+#:
+#: Measured off engraved lead sheets rather than guessed: chord symbols sit
+#: about three to four interlines above the top line, so a band of two and a
+#: half reads the note stems underneath them and nothing else. Five reaches the
+#: chord row with room for a two-line symbol, and stops below the previous
+#: staff. Taller starts pulling in the tempo mark and the title.
+BAND_HEIGHT = 5.0
 #: And how much clear air to leave between the band and the staff itself, so
 #: ledger lines and high noteheads stay out of the crop.
 BAND_GAP = 0.2
@@ -75,6 +88,10 @@ MAX_BAND_SCALE = 4.0
 #: finer than a beat would read that spacing as musical intent. This is the
 #: fallback for a measure with no time signature in scope.
 DEFAULT_BEAT_QUANTUM = 1.0
+
+
+class TesseractOutputError(RuntimeError):
+    """Tesseract ran but did not produce the output format that was asked for."""
 
 
 @dataclass(frozen=True)
@@ -300,11 +317,16 @@ def tesseract_command(
         "1",
         "--psm",
         str(psm),
+        # TSV as a *parameter*, not as the "tsv" config file. The config file
+        # lives beside the traineddata, and a container that downloads a single
+        # eng.traineddata for Audiveris and points TESSDATA_PREFIX at it does
+        # not have one. Tesseract then prints "Can't open tsv" to stderr, exits
+        # 0, and emits plain text -- which parses as no words at all.
+        "-c",
+        "tessedit_create_tsv=1",
     ]
     if whitelist:
         command += ["-c", f"tessedit_char_whitelist={whitelist}"]
-    # Tesseract takes its output configuration last, as a config file name.
-    command.append("tsv")
     return command
 
 
@@ -413,7 +435,12 @@ def _run_tesseract(
 
 
 def parse_tsv(text: str) -> list[BandWord]:
-    """Parse Tesseract's TSV output into words, keeping their centre x."""
+    """Parse Tesseract's TSV output into words, keeping their centre x.
+
+    Output that is not TSV raises rather than reading as an empty page: those
+    two look identical from here, and one of them is a configuration fault that
+    silently costs every chord on the page.
+    """
     words: list[BandWord] = []
     lines = text.splitlines()
     if not lines:
@@ -426,7 +453,11 @@ def parse_tsv(text: str) -> list[BandWord]:
         conf_at = header.index("conf")
         text_at = header.index("text")
     except ValueError:
-        return words
+        raise TesseractOutputError(
+            "tesseract did not return TSV. Its output began: "
+            f"{lines[0][:60]!r}. This usually means the 'tsv' output could not "
+            "be selected -- check TESSDATA_PREFIX."
+        ) from None
 
     for line in lines[1:]:
         fields = line.split("\t")
@@ -601,6 +632,7 @@ def apply_chords(score, page: list[StaffChords]) -> tuple[int, list[str]]:
     per_system = len(staves) // len(systems)
     added = 0
     notes: list[str] = []
+    repairs: list[str] = []
 
     for system_index, measures in enumerate(systems):
         # The chord band belongs to the top staff of a system; on a grand staff
@@ -648,12 +680,22 @@ def apply_chords(score, page: list[StaffChords]) -> tuple[int, list[str]]:
                 continue
             measure.insert(offset, symbol)
             added += 1
+            if chord.original.strip() != chord.figure:
+                # Repair can be wrong -- "Br7" is either Bb7 with a mangled flat
+                # or Bm7 with a mangled m. A user who can see that a spelling
+                # was changed can check that bar; one who cannot gets a wrong
+                # chord and no reason to look.
+                repairs.append(
+                    f"bar {measure.number}: read {chord.original!r} as "
+                    f"{chord.figure!r}"
+                )
 
     if added:
         notes.append(
             f"read {added} more chord symbol(s) off the page with Tesseract's LSTM "
             "engine, which the recognition pass had missed entirely"
         )
+        notes.extend(repairs)
     return added, notes
 
 
@@ -701,19 +743,39 @@ def read_and_apply(
         ]
 
     staves: list[StaffChords] = []
-    for page in pages:
-        staves.extend(
-            read_page_staves(
-                page,
-                workdir=workdir,
-                whitelist=whitelist,
-                min_confidence=min_confidence,
+    try:
+        for page in pages:
+            staves.extend(
+                read_page_staves(
+                    page,
+                    workdir=workdir,
+                    whitelist=whitelist,
+                    min_confidence=min_confidence,
+                )
             )
-        )
+    except TesseractOutputError as exc:
+        return 0, [f"the chord-band pass could not read tesseract's output: {exc}"]
+
     if not staves:
         return 0, ["the chord-band pass found no staves on the page"]
 
-    return apply_chords(score, staves)
+    read = sum(len(entry.chords) for entry in staves)
+    if not read:
+        # Silence here used to be indistinguishable from success. It is not:
+        # a page with staves on it and no readable chord symbols above any of
+        # them usually means the band is looking in the wrong place.
+        return 0, [
+            f"the chord-band pass found {len(staves)} staff/staves but read no "
+            "chord symbols above any of them"
+        ]
+
+    added, notes = apply_chords(score, staves)
+    if not added and not notes:
+        notes = [
+            f"the chord-band pass read {read} chord symbol(s) but placed none; "
+            "they were already in the score, or fell on beats that were taken"
+        ]
+    return added, notes
 
 
 # -- numeric helpers -------------------------------------------------------

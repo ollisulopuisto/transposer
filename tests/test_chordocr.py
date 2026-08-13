@@ -190,6 +190,38 @@ def test_promotion_can_be_told_to_ignore_placement():
     assert promoted == 1
 
 
+#: The flat glyph, off a real 144 dpi engraved lead sheet, through the LSTM
+#: engine. It is a small hook over a stem, and at chart size that is what these
+#: come back as. None of them is a chord quality, so reading them as a flat
+#: costs nothing that was otherwise readable.
+FLAT_GLYPHS = [
+    ("Ev", "Eb"),
+    ("EY", "Eb"),
+    ("Av", "Ab"),
+    ("Bv7", "Bb7"),
+    ("APT", "Ab7"),
+    ("EP7", "Eb7"),
+]
+
+
+@pytest.mark.parametrize(("observed", "expected"), FLAT_GLYPHS)
+def test_the_flat_glyph_survives_the_lstm_engine(observed, expected):
+    assert repair_chord_symbol(observed).repaired == expected
+
+
+def test_an_r_after_the_root_is_still_read_as_a_minor():
+    """"Br7" is genuinely ambiguous -- Bb7 with a mangled flat, or Bm7 with a
+    mangled m -- and the text alone cannot settle it.
+
+    It stays a minor, because on a chart Gm7 is far commoner than Gb7 and
+    reading every root-adjacent r as a flat would break the commoner case. The
+    consequence is that this one can be wrong, which is why the band pass
+    reports every symbol whose spelling it changed.
+    """
+    assert repair_chord_symbol("Br7").repaired == "Bm7"
+    assert repair_chord_symbol("Gr7").repaired == "Gm7"
+
+
 def test_a_bare_flat_triad_becomes_a_chord_symbol():
     """music21 will not build a ChordSymbol from the figure "Bb".
 

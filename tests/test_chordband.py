@@ -172,12 +172,85 @@ def test_the_command_line_asks_for_the_lstm_engine():
     command = chordband.tesseract_command(Path("band.png"))
     assert "--oem" in command
     assert command[command.index("--oem") + 1] == "1"
-    assert command[-1] == "tsv"
+
+
+def test_tsv_is_requested_as_a_parameter_not_a_config_file():
+    """``tesseract ... tsv`` needs a config file that lives beside the
+    traineddata. Point TESSDATA_PREFIX at a bare directory -- which is exactly
+    what a container does when it downloads one eng.traineddata for Audiveris --
+    and tesseract cannot find it, prints "Can't open tsv" to stderr, exits 0,
+    and emits plain text. Every word is then silently lost in parsing. Setting
+    the underlying parameter does not depend on the tessdata layout at all.
+    """
+    command = chordband.tesseract_command(Path("band.png"))
+    assert "-c" in command
+    assert any(part == "tessedit_create_tsv=1" for part in command)
+    assert "tsv" not in command  # not as a bare config-file argument
 
 
 def test_the_command_line_can_drop_the_whitelist():
     command = chordband.tesseract_command(Path("band.png"), whitelist=None)
     assert not any("whitelist" in part for part in command)
+
+
+def test_no_character_whitelist_by_default():
+    """A whitelist forbids exactly the characters the repair pass decodes.
+
+    Restricting the alphabet to what a chord symbol is *spelled* with removes
+    the evidence: a flat comes back as P, v or Y, a seven as T or /, and the
+    confusion table exists to map those back. On a real engraved chart the
+    whitelist cost every flat chord on the page.
+    """
+    assert chordband.CHORD_WHITELIST is None
+    command = chordband.tesseract_command(Path("band.png"))
+    assert not any("whitelist" in part for part in command)
+
+
+def test_the_band_is_tall_enough_for_where_chords_are_engraved():
+    """Chord symbols sit three to four interlines above the top staff line, not
+    one. A band that stops short of them reads note stems and beams instead."""
+    assert chordband.BAND_HEIGHT >= 4.5
+
+    staff = chordband.Staff(top=440, bottom=520, left=100, right=2000, interline=20.0)
+    _, top, _, bottom = chordband.band_box([staff], 0)
+    assert bottom <= 440
+    assert 440 - top >= 90  # reaches the chord row, ~4.5 interlines up
+
+
+def test_plain_text_output_is_not_silently_read_as_no_words():
+    """The failure above produced real output and zero words, with no error.
+
+    A parser that returns nothing when handed something it does not understand
+    is indistinguishable from a page with no chords on it, which is what made
+    this cost an afternoon.
+    """
+    plain = "Cm\n\nGm\n\nEb7\n\nAb\n"
+    with pytest.raises(chordband.TesseractOutputError):
+        chordband.parse_tsv(plain)
+
+
+def test_empty_output_is_simply_no_words():
+    assert chordband.parse_tsv("") == []
+
+
+def test_a_tsv_header_with_no_rows_is_no_words():
+    header = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num"
+        "\tleft\ttop\twidth\theight\tconf\ttext"
+    )
+    assert chordband.parse_tsv(header + "\n") == []
+
+
+def test_tsv_rows_are_parsed():
+    header = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num"
+        "\tleft\ttop\twidth\theight\tconf\ttext"
+    )
+    row = "5\t1\t1\t1\t1\t1\t100\t10\t40\t30\t92.5\tAm7"
+    (word,) = chordband.parse_tsv(f"{header}\n{row}\n")
+    assert word.text == "Am7"
+    assert word.x == 120  # left + width // 2
+    assert word.confidence == pytest.approx(92.5)
 
 
 def test_words_that_are_not_chords_are_discarded():
@@ -406,6 +479,32 @@ def test_a_different_chord_on_an_occupied_beat_is_left_out():
 
     added, _ = chordband.apply_chords(score, page)
     assert added == 0
+
+
+def test_a_changed_spelling_is_reported():
+    """The band pass repairs mangled text, and repair can be wrong.
+
+    "Br7" is either Bb7 with a mangled flat or Bm7 with a mangled m, and the
+    grammar picks the minor. A user who can see that it happened can fix it in
+    the MusicXML; one who cannot gets a wrong chord and no reason to look.
+    """
+    score = build_score(measures=4, per_system=4)
+    page = [
+        chordband.StaffChords(
+            staff=make_staff(0),
+            barlines=[100, 200, 300, 400, 500],
+            chords=[
+                chordband.BandChord("Bm7", "Br7", staff_index=0, x=110, confidence=90),
+                chordband.BandChord("C", "C", staff_index=0, x=310, confidence=90),
+            ],
+        ),
+    ]
+
+    added, notes = chordband.apply_chords(score, page)
+    assert added == 2
+    assert any("'Br7'" in note and "'Bm7'" in note for note in notes), notes
+    # The one that did not change is not worth a line.
+    assert not any("'C'" in note for note in notes), notes
 
 
 def test_a_page_that_disagrees_about_the_systems_is_refused():
