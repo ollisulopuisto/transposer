@@ -270,10 +270,17 @@ def chord_symbol(figure: str):
     flat-spelling difference is handled once rather than at each call site --
     and a figure music21 rejects for any other reason is dropped rather than
     raised, because leaving the text alone is always the safe outcome.
+
+    The conversion happens **first**, not as a fallback, and that ordering is
+    the whole point. ``ChordSymbol("Ab7")`` does not raise: it succeeds, reading
+    the figure as A with an added flat seventh. A fallback that fires only on
+    failure therefore never runs, and the chart's A flat seven silently becomes
+    an A chord -- which then transposes to something a semitone away with a
+    figure like "F#7 add b7".
     """
     from music21 import harmony
 
-    for candidate in dict.fromkeys([figure, music21_figure(figure)]):
+    for candidate in dict.fromkeys([music21_figure(figure), figure]):
         try:
             return harmony.ChordSymbol(candidate)
         except Exception:

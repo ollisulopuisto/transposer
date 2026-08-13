@@ -9,6 +9,7 @@ import music21 as m21
 import pytest
 
 from transposer.chordocr import (
+    chord_symbol,
     is_above_staff,
     promote_chord_symbols,
     repair_all,
@@ -237,6 +238,39 @@ def test_a_bare_flat_triad_becomes_a_chord_symbol():
 
         (symbol,) = list(score.recurse().getElementsByClass(m21.harmony.ChordSymbol))
         assert symbol.root().name == root
+
+
+@pytest.mark.parametrize(
+    ("figure", "root", "expected_pitches"),
+    [
+        ("Ab7", "A-", ["A-", "C", "E-", "G-"]),
+        ("Bb7", "B-", ["B-", "D", "F", "A-"]),
+        ("Eb7", "E-", ["E-", "G", "B-", "D-"]),
+        ("Db7", "D-", ["D-", "F", "A-", "C-"]),
+    ],
+)
+def test_a_flat_seventh_chord_is_not_read_as_an_added_flat_seven(
+    figure, root, expected_pitches
+):
+    """music21 parses "Ab7" as A with an added flat seven, not as A flat seven.
+
+    It does not raise -- it succeeds, with the wrong chord -- so a fallback that
+    only fires on failure never runs. On a chart in E flat this turned every
+    dominant seventh into a chord a semitone away with a nonsense figure:
+    Ab7 came out of the transposition as "F#7 add b7".
+    """
+    symbol = chord_symbol(figure)
+    assert symbol is not None
+    assert symbol.root().name == root
+    assert [p.name for p in symbol.pitches] == expected_pitches
+
+
+def test_the_flat_conversion_leaves_a_quality_b_alone():
+    """The b in m7b5 is part of the quality, not an accidental on the root."""
+    symbol = chord_symbol("Dm7b5")
+    assert symbol is not None
+    assert symbol.root().name == "D"
+    assert [p.name for p in symbol.pitches] == ["D", "F", "A-", "C"]
 
 
 def test_flat_chords_with_a_quality_still_work():
