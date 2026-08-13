@@ -255,11 +255,7 @@ class JobStore:
                 ).strip()
             finally:
                 job.finished_at = time.time()
-                # The scan was only needed while it was being recognised. An
-                # open instance that keeps it accumulates other people's sheet
-                # music for no reason anyone asked for.
-                with contextlib.suppress(OSError):  # unlink rarely fails
-                    job.source.unlink(missing_ok=True)
+                _discard_inputs(job)
 
     def _reap_forever(self) -> None:
         """Sweep expired jobs in the background.
@@ -309,6 +305,40 @@ class JobStore:
             job = self._jobs.pop(oldest, None)
             if job is not None:
                 shutil.rmtree(job.workdir, ignore_errors=True)
+
+
+#: What a finished job still has to be able to serve. Everything else it wrote
+#: is an input or an intermediate, and both are copies of the user's music.
+_KEEP_AFTER_RUN = ("transposed.musicxml", "render")
+
+
+def _discard_inputs(job: Job) -> None:
+    """Delete the upload and the intermediates as soon as the run is over.
+
+    Deleting the file the request wrote is not enough, and assuming otherwise
+    is how a live instance ended up holding somebody's scan: ingestion *copies*
+    the upload into the pipeline's working directory before touching it, and
+    rasterising a PDF leaves a full-page PNG per page next to it. Those pages
+    are also the bulk of the disk a job occupies.
+
+    What the endpoints serve -- the PDF, the transposed MusicXML and the SVG
+    previews -- stays until the retention sweep takes it.
+    """
+    with contextlib.suppress(OSError):
+        job.source.unlink(missing_ok=True)
+
+    work = job.workdir / "work"
+    if not work.is_dir():
+        return
+
+    for entry in work.iterdir():
+        if entry.name in _KEEP_AFTER_RUN:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            with contextlib.suppress(OSError):
+                entry.unlink()
 
 
 def _safe_name(name: str) -> str:

@@ -148,3 +148,56 @@ def _wait_for(job, timeout: float = 20.0) -> None:
             return
         time.sleep(0.02)
     raise AssertionError(f"job stayed {job.status}")
+
+
+def test_no_copy_of_the_upload_survives_the_run(tmp_path):
+    """Deleting the file the request wrote is not enough.
+
+    Ingestion copies the upload into the pipeline's own working directory
+    before touching it, so removing only the original leaves the user's music
+    sitting in work/input under a name we chose. Verified against a real run
+    on the live instance, where exactly that happened.
+    """
+    import music21 as m21
+    from music21.converter.subConverters import ConverterMusicXML  # noqa: F401
+    from music21.musicxml.m21ToXml import GeneralObjectExporter
+
+    part = m21.stream.Part()
+    part.append(m21.note.Note("c4", quarterLength=4.0))
+    score = m21.stream.Score()
+    score.append(part)
+    data = GeneralObjectExporter().parse(score)
+
+    made = JobStore(tmp_path, workers=1)
+    try:
+        job = made.submit("private.musicxml", data, PipelineOptions(), owner="me")
+        _wait_for(job, timeout=90)
+        assert job.status == "done", job.error
+
+        # The uploaded file itself, under any of the names it was copied to.
+        # The output PDF is named after it ("private-C.pdf") and is the thing
+        # the user came for, so it is not a leftover.
+        leftovers = [
+            path
+            for path in job.workdir.rglob("*")
+            if path.is_file() and path.name == "private.musicxml"
+        ]
+        assert leftovers == [], leftovers
+
+        # What the endpoints serve is still there.
+        assert job.result is not None
+        assert job.result.pdf.exists()
+        assert job.result.musicxml.exists()
+    finally:
+        made.shutdown()
+
+
+def test_rasterised_pages_do_not_outlive_the_run(tmp_path):
+    """They are the bulk of the disk and nothing serves them."""
+    made = JobStore(tmp_path, workers=1)
+    try:
+        job = submit(made)
+        _wait_for(job)
+        assert not (job.workdir / "work" / "input").exists()
+    finally:
+        made.shutdown()
