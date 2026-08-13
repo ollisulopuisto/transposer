@@ -28,6 +28,18 @@ from pathlib import Path
 from music21 import clef, key, stream
 
 
+@dataclass(frozen=True)
+class IncompleteMeasure:
+    """A bar holding less music than its time signature calls for."""
+
+    number: int
+    actual: float
+    expected: float
+
+    def describe(self) -> str:
+        return f"bar {self.number} ({self.actual:g} of {self.expected:g} beats)"
+
+
 @dataclass
 class CleanupReport:
     """What the cleanup passes changed."""
@@ -38,6 +50,7 @@ class CleanupReport:
     credits_removed: int = 0
     text_removed: int = 0
     lyrics_attached: int = 0
+    incomplete: list[IncompleteMeasure] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -247,6 +260,47 @@ def drop_unparsed_text(score: stream.Stream, keep_chords: bool = True) -> int:
     return removed
 
 
+def incomplete_measures(
+    score: stream.Stream, tolerance: float = 0.01
+) -> list[IncompleteMeasure]:
+    """Bars whose contents do not fill them, in order.
+
+    This is the most useful thing a recognition report can say, because it is
+    the one mistake the pipeline cannot repair and the user can. A bar holding
+    two beats of a four-beat measure means notes were missed, and no amount of
+    downstream cleaning puts them back -- but "bar 4, bar 9, bar 13" tells
+    someone exactly which three bars to open in a notation editor.
+
+    It is measured off the score rather than scraped from an engine's log, so
+    it says the same thing whichever engine produced the music.
+
+    A pickup bar is deliberately short and is not reported. On a grand staff the
+    same bar is usually wrong in both hands, and it is listed once.
+    """
+    found: dict[int, IncompleteMeasure] = {}
+
+    for part in _parts_of(score):
+        for measure in part.getElementsByClass(stream.Measure):
+            if measure.number is None:
+                continue
+            # An anacrusis, and a bar an engine marked as deliberately partial,
+            # are written that way on purpose.
+            if getattr(measure, "paddingLeft", 0) or getattr(measure, "paddingRight", 0):
+                continue
+
+            expected = float(measure.barDuration.quarterLength)
+            actual = float(measure.duration.quarterLength)
+            if expected <= 0 or actual >= expected - tolerance:
+                continue
+
+            entry = IncompleteMeasure(int(measure.number), actual, expected)
+            # The shortest reading of a bar is the informative one.
+            if entry.number not in found or actual < found[entry.number].actual:
+                found[entry.number] = entry
+
+    return [found[number] for number in sorted(found)]
+
+
 def ensure_title(score: stream.Score) -> None:
     """Promote a movement name into the title when the title is empty.
 
@@ -347,6 +401,19 @@ def clean_score(
     if fix_metadata:
         ensure_title(score)
         report.notes += scrub_metadata(score)
+
+    # Reported last, and never repaired: these are the bars where the engine
+    # missed notes, and padding them with rests would silence the warning while
+    # leaving the music wrong.
+    report.incomplete = incomplete_measures(score)
+    if report.incomplete:
+        listed = ", ".join(entry.describe() for entry in report.incomplete)
+        report.notes.append(
+            f"{len(report.incomplete)} bar(s) hold less music than the time "
+            f"signature calls for, so notes were missed there: {listed}. "
+            "Nothing downstream can put them back -- open the MusicXML and "
+            "check those bars against the original."
+        )
 
     return report
 

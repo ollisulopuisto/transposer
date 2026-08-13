@@ -188,3 +188,92 @@ def test_clean_score_reports_what_it_did():
     assert report.changed
     assert report.key_changes_dropped == 1
     assert report.notes
+
+
+# -- bars that do not add up ---------------------------------------------
+
+
+def bar_of(part, number, contents):
+    measure = m21.stream.Measure(number=number)
+    if number == 1:
+        measure.insert(0, m21.meter.TimeSignature("4/4"))
+    offset = 0.0
+    for length in contents:
+        measure.insert(offset, m21.note.Note("c4", quarterLength=length))
+        offset += length
+    part.append(measure)
+    return measure
+
+
+def test_bars_that_do_not_fill_are_named():
+    """"6 measures whose rhythm did not add up" tells you something is wrong
+    and not where. The bar numbers are the difference between that and knowing
+    which three bars to open in a notation editor."""
+    from transposer.cleanup import incomplete_measures
+
+    part = m21.stream.Part()
+    bar_of(part, 1, [1, 1, 1, 1])
+    bar_of(part, 2, [1, 1])
+    bar_of(part, 3, [1, 1, 1, 1])
+    bar_of(part, 4, [1, 1, 1, 0.5])
+    score = m21.stream.Score()
+    score.insert(0, part)
+
+    found = incomplete_measures(score)
+    assert [entry.number for entry in found] == [2, 4]
+    assert found[0].actual == 2.0
+    assert found[0].expected == 4.0
+
+
+def test_a_complete_score_reports_nothing():
+    from transposer.cleanup import incomplete_measures
+
+    part = m21.stream.Part()
+    bar_of(part, 1, [1, 1, 1, 1])
+    bar_of(part, 2, [2, 2])
+    score = m21.stream.Score()
+    score.insert(0, part)
+
+    assert incomplete_measures(score) == []
+
+
+def test_a_pickup_bar_is_not_a_mistake():
+    """A score that opens with an anacrusis is written that way on purpose."""
+    from transposer.cleanup import incomplete_measures
+
+    part = m21.stream.Part()
+    pickup = bar_of(part, 0, [1])
+    pickup.paddingLeft = 3.0
+    bar_of(part, 1, [1, 1, 1, 1])
+    score = m21.stream.Score()
+    score.insert(0, part)
+
+    assert incomplete_measures(score) == []
+
+
+def test_the_same_bar_in_two_staves_is_reported_once():
+    """A grand staff misreads both hands of a bar together; the user only needs
+    to be told about the bar."""
+    from transposer.cleanup import incomplete_measures
+
+    score = m21.stream.Score()
+    for _ in range(2):
+        part = m21.stream.Part()
+        bar_of(part, 1, [1, 1, 1, 1])
+        bar_of(part, 2, [1, 1])
+        score.insert(0, part)
+
+    assert [entry.number for entry in incomplete_measures(score)] == [2]
+
+
+def test_the_cleanup_report_names_them():
+    from transposer.cleanup import clean_score
+
+    part = m21.stream.Part()
+    bar_of(part, 1, [1, 1, 1, 1])
+    bar_of(part, 2, [1, 1])
+    score = m21.stream.Score()
+    score.insert(0, part)
+
+    report = clean_score(score)
+    assert any("bar 2" in note and "2 of 4" in note for note in report.notes), report.notes
