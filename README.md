@@ -325,6 +325,42 @@ bare flat triad on a chart was being read, repaired, and then silently dropped.
 Slash bass notes (`C/G`, `Dm7/F`) now survive as well, instead of failing the
 grammar and being left as text.
 
+## Running it where other people can reach it
+
+The upload endpoint is anonymous and answers each request by starting a JVM that
+runs for minutes with several gigabytes of heap. That is an expensive thing to
+offer the internet, so an open instance limits it:
+
+| Limit | Default | Environment variable |
+|---|---|---|
+| Recognition jobs per client per hour | 12 | `TRANSPOSER_JOBS_PER_HOUR` |
+| Unfinished jobs per client at once | 2 | `TRANSPOSER_JOBS_IN_FLIGHT` |
+| Requests per client per minute | 240 | `TRANSPOSER_REQUESTS_PER_MINUTE` |
+| Upload size | 64 MB | — |
+| Pages per upload | 40 | — |
+| Pixels per page | 80 M | — |
+| How long results are kept | 1 hour | — |
+
+The in-flight limit is the one that matters most: an hourly quota still lets one
+client queue a hundred scans and deny the service to everyone else while they
+run.
+
+**Uploads are deleted as soon as recognition finishes**, and everything else a
+job produced is deleted an hour later, whichever comes first — plus a disk
+budget that evicts the oldest finished jobs early if scans are large. A job id
+is a 128-bit secret and is the only thing needed to download that job's result,
+so treat the link as private.
+
+`GET /jobs` lists **only the caller's own** jobs, keyed by a cookie. It is not
+authentication: it stops an anonymous instance showing every visitor what
+everyone else is transposing, which is what it did before. If the music matters,
+put the whole thing behind a password at the proxy.
+
+Behind a reverse proxy, set `TRANSPOSER_TRUST_FORWARDED=1` so the limits count
+real clients rather than lumping the internet together as one. The Docker image
+sets it, because it is always behind Caddy. Do **not** set it on a directly
+exposed instance: any client can send that header and mint itself a fresh quota.
+
 ## Reading the output critically
 
 OMR is not a solved problem, and the honest workflow is *recognise, then check*.

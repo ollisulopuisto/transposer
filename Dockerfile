@@ -45,7 +45,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TRANSPOSER_AUDIVERIS=/opt/audiveris/bin/Audiveris \
     TESSDATA_PREFIX=/opt/tessdata \
-    TRANSPOSER_DATA_DIR=/data
+    TRANSPOSER_DATA_DIR=/data \
+    TRANSPOSER_TRUST_FORWARDED=1
 
 # libcairo2 and the font stack are what CairoSVG needs to turn Verovio's SVG
 # into PDF; fonts-dejavu keeps lyrics and chord names from rendering as boxes.

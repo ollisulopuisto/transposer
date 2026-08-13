@@ -223,3 +223,63 @@ def test_a_rendered_chord_sheet_has_no_missing_glyph_boxes(tmp_path):
     svg = result.render.svg_pages[0].read_text(encoding="utf-8")
     assert "♯" in svg
     assert 'font-family="Leipzig"' not in svg
+
+
+# -- limits on what an upload may ask the machine to do -------------------
+
+
+def test_a_pdf_with_too_many_pages_is_refused(tmp_path):
+    """Every page is rasterised and then recognised. A thousand-page upload is
+    not a scan of a song, it is a request to occupy the machine."""
+    import pymupdf
+
+    from transposer.errors import UnsupportedInputError
+    from transposer.ingest import ingest
+
+    big = tmp_path / "big.pdf"
+    with pymupdf.open() as document:
+        for _ in range(12):
+            document.new_page(width=200, height=200)
+        document.save(big)
+
+    ingested = ingest(big, tmp_path / "work")
+    with pytest.raises(UnsupportedInputError, match="pages"):
+        ingested.rasterize(dpi=72, max_pages=10)
+
+
+def test_a_pdf_within_the_page_limit_is_fine(tmp_path):
+    import pymupdf
+
+    from transposer.ingest import ingest
+
+    small = tmp_path / "small.pdf"
+    with pymupdf.open() as document:
+        document.new_page(width=200, height=200)
+        document.save(small)
+
+    ingested = ingest(small, tmp_path / "work")
+    assert len(ingested.rasterize(dpi=72, max_pages=10)) == 1
+
+
+def test_an_image_with_an_absurd_pixel_count_is_refused(tmp_path):
+    """A few kilobytes of PNG can decompress to gigabytes of pixels."""
+    from PIL import Image
+
+    from transposer.errors import UnsupportedInputError
+    from transposer.ingest import guard_image_size
+
+    path = tmp_path / "bomb.png"
+    Image.new("L", (40, 40), 255).save(path)
+
+    with pytest.raises(UnsupportedInputError, match="pixels"):
+        guard_image_size(path, max_pixels=100)
+
+
+def test_an_ordinary_image_passes_the_guard(tmp_path):
+    from PIL import Image
+
+    from transposer.ingest import guard_image_size
+
+    path = tmp_path / "fine.png"
+    Image.new("L", (40, 40), 255).save(path)
+    guard_image_size(path, max_pixels=100_000)
