@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .chordband import MIN_CONFIDENCE
 from .errors import TransposerError
 from .ingest import DEFAULT_DPI
 from .preprocess import TARGET_INTERLINE
@@ -178,6 +179,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     transpose.add_argument(
+        "--no-chord-ocr",
+        dest="chord_ocr",
+        action="store_false",
+        help=(
+            "do not re-read the band above each staff with Tesseract's LSTM "
+            "engine. That pass finds chord symbols the OMR engine never "
+            "proposed at all, which on a chart is most of them."
+        ),
+    )
+    transpose.add_argument(
+        "--chord-ocr-confidence",
+        type=float,
+        default=MIN_CONFIDENCE,
+        metavar="PERCENT",
+        help=(
+            "how sure the LSTM pass must be before a word is offered to the "
+            f"chord grammar (default: {MIN_CONFIDENCE:g})"
+        ),
+    )
+    transpose.add_argument(
         "--no-chord-repair",
         dest="repair_chords",
         action="store_false",
@@ -272,6 +293,8 @@ def _cmd_transpose(args: argparse.Namespace) -> int:
         strip_credits=args.strip_credits,
         repair_chords=args.repair_chords,
         chord_pass=args.chord_pass,
+        chord_ocr=args.chord_ocr,
+        chord_ocr_confidence=args.chord_ocr_confidence,
         preprocess=args.preprocess,
         target_interline=args.target_interline,
         deskew=args.deskew,

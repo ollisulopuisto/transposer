@@ -27,6 +27,8 @@ There is also a web UI (`transposer serve`) and a Docker image.
 * **Recognises** the music with a pluggable OMR backend — Audiveris, oemer or
   Mozart, whichever is installed.
 * **Repairs** the mistakes OMR reliably makes, and tells you about each one.
+* **Re-reads the chord band** with Tesseract's LSTM engine, which finds the
+  symbols the OMR engine never proposed at all — on a chart, most of them.
 * **Measures** the staff-line spacing and scales the page to what the engine
   wants, instead of guessing at a dpi number.
 * **Transposes** notes, key signatures, chord symbols, and chord names that OMR
@@ -48,7 +50,9 @@ pip install -e '.[web]'
 ```
 
 That gives you a working pipeline for MusicXML and MIDI input plus PDF output.
-For scans you need an OMR engine — see below — then:
+For scans you need an OMR engine — see below — and, for the chord-band pass,
+the `tesseract` binary (`brew install tesseract` or `apt install tesseract-ocr`).
+Then:
 
 ```bash
 transposer engines     # what is installed and what is missing
@@ -230,6 +234,7 @@ The relevant flags:
 | `--target-interline N` | staff spacing to scale to (default 20); matters far more than dpi |
 | `--binarize` | sharper text, softer noteheads: better chords, worse notes |
 | `--chord-pass` | run recognition twice and take chords from the binarised pass |
+| `--no-chord-ocr` | skip the LSTM re-read of the band above each staff |
 | `--no-preprocess` | hand the scan to the engine untouched |
 | `--no-deskew`, `--no-sharpen` | turn off individual steps |
 
@@ -261,6 +266,52 @@ positives: 30 lines of surrounding prose (`Somewhere`, `poco rit.`,
 `Harold Arlen`, `D.C. al Fine`) were all correctly rejected.
 
 `--no-chord-repair` turns it off.
+
+### Re-reading the chord band
+
+Repair can only fix a symbol the engine proposed. On a 33-chord chart Audiveris
+proposed 11 — the other 22 were never detected at all, and nothing downstream
+can recover a symbol that is not in the MusicXML.
+
+That is a limitation of *which* Tesseract engine Audiveris uses, not of
+Tesseract. It initialises the pre-4.0 **legacy** classifier; Tesseract 4 and 5
+also ship an **LSTM** line recogniser that is markedly better on short tokens in
+display faces. So `transposer` runs its own pass with `--oem 1`, over just the
+strip of page where chord symbols live:
+
+```
+find the staves ──▶ crop the band above each ──▶ OCR it (LSTM)
+    ──▶ keep what the chord grammar accepts ──▶ place it by x position
+```
+
+Cropping to the band is what makes this work: no noteheads, no beams, no lyrics,
+so the recogniser is not fighting the score. Both of Tesseract's relevant page
+segmentation modes are run and the readings merged by position, because neither
+wins everywhere.
+
+Placement is by systems, not by a global bar count: the staves found on the page
+must divide evenly into the systems the score was broken into, and within a
+system the detected barlines are used when there are as many as the score says
+and an even division otherwise. Positions are quantised to the beat. If the page
+and the score disagree about the systems, **nothing is placed** and the run says
+so — a chord in the wrong bar is worse than a chord that was never read.
+
+Every candidate still goes through the same chord grammar as the repair pass, so
+prose is rejected the same way.
+
+This needs the `tesseract` binary on `PATH` (`brew install tesseract`,
+`apt install tesseract-ocr`; the Docker image has it). Without it the pass is
+skipped with a note. `--no-chord-ocr` turns it off, and
+`--chord-ocr-confidence` sets how sure the recogniser must be before a word is
+offered to the grammar.
+
+Two bugs this pass exposed, both now fixed and both affecting the older paths
+too: the LSTM engine renders a `7` as `/` on chart fonts about as reliably as
+the legacy engine renders it as `?`, and music21 will not build a chord from the
+figure `Bb` — it reads the `b` as a quality abbreviation and raises — so every
+bare flat triad on a chart was being read, repaired, and then silently dropped.
+Slash bass notes (`C/G`, `Dm7/F`) now survive as well, instead of failing the
+grammar and being left as text.
 
 ## Reading the output critically
 
@@ -332,6 +383,7 @@ src/transposer/
   transpose.py       key detection, transposition, reporting
   chordtext.py       chord symbols that arrived as plain text
   chordocr.py        re-spelling chord symbols OCR mangled
+  chordband.py       re-reading the band above each staff with Tesseract LSTM
   cleanup.py         repairs for common OMR mistakes
   ingest.py          input normalisation, PDF rasterising, PDF merging
   pipeline.py        the end-to-end job

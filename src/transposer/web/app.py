@@ -87,6 +87,7 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
         key_changes: str = Form("auto"),
         binarize: bool = Form(False),
         chord_pass: bool = Form(False),
+        chord_ocr: bool = Form(True),
     ) -> JSONResponse:
         data = await file.read()
         if not data:
@@ -116,6 +117,7 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
             key_changes=key_changes if key_changes in {"auto", "keep", "drop"} else "auto",
             binarize=binarize,
             chord_pass=chord_pass,
+            chord_ocr=chord_ocr,
         )
 
         job = store.submit(file.filename or "upload", data, options)

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from music21 import converter, stream
 
+from .chordband import MIN_CONFIDENCE, read_and_apply
 from .chordocr import merge_chord_symbols
 from .cleanup import CleanupReport, clean_score, strip_credits
 from .errors import TransposerError
@@ -47,6 +48,8 @@ class PipelineOptions:
     strip_credits: bool = True
     repair_chords: bool = True
     chord_pass: bool = False
+    chord_ocr: bool = True
+    chord_ocr_confidence: float = MIN_CONFIDENCE
     paper: str = "a4"
     landscape: bool = False
     scale: int = 40
@@ -118,7 +121,7 @@ def run(
             progress(stage, message)
 
     report("ingest", f"reading {source.name}")
-    engine, omr, score, preprocessing, preprocess_notes = _recognise(
+    engine, omr, score, preprocessing, preprocess_notes, ingested = _recognise(
         source, options, workdir, binarize=options.binarize, report=report
     )
 
@@ -140,7 +143,7 @@ def run(
     if options.chord_pass and engine.name != "passthrough" and not options.binarize:
         report("chord-pass", "second recognition pass for chord symbols")
         try:
-            _, _, text_score, _, _ = _recognise(
+            _, _, text_score, _, _, _ = _recognise(
                 source,
                 options,
                 workdir / "chord-pass",
@@ -160,6 +163,29 @@ def run(
             cleanup.notes.extend(merge_notes)
         except TransposerError as exc:
             cleanup.notes.append(f"the chord-symbol pass did not run: {exc}")
+
+    # The OMR engines drive Tesseract's legacy classifier, which on a chord
+    # chart does not so much misread the symbols as never propose them. Reading
+    # the band above each staff directly, with the LSTM engine, finds the ones
+    # that never reached the MusicXML at all -- and because it works off the
+    # page rather than the recognised score, it is independent of what the
+    # engine got wrong.
+    if options.chord_ocr and engine.name != "passthrough":
+        report("chord-ocr", "reading the chord band with Tesseract's LSTM engine")
+        try:
+            pages = list(ingested.pages) or ingested.rasterize(dpi=options.dpi)
+        except TransposerError as exc:
+            pages = []
+            cleanup.notes.append(f"the chord-band pass did not run: {exc}")
+        if pages:
+            added, band_notes = read_and_apply(
+                score,
+                pages,
+                workdir=workdir / "chord-band",
+                min_confidence=options.chord_ocr_confidence,
+            )
+            cleanup.chords_promoted += added
+            cleanup.notes.extend(band_notes)
 
     report("transpose", f"transposing to {options.target}")
     transposed, transposition = transpose_score(
@@ -248,7 +274,7 @@ def _recognise(source: Path, options: PipelineOptions, workdir: Path, binarize: 
     if not isinstance(score, stream.Score):
         score = _as_score(score)
 
-    return engine, omr, score, preprocessing, notes
+    return engine, omr, score, preprocessing, notes, ingested
 
 
 def _preprocess(

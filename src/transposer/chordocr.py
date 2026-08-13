@@ -27,12 +27,17 @@ list of hand-written substitutions:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 #: Glyphs Tesseract substitutes for each other on chart fonts. Each entry maps
 #: a character we want to the shapes it gets misread as.
 CONFUSIONS: dict[str, str] = {
-    "7": "?T1lIi|!j)¡í7ƒ",
+    # The LSTM engine's signature failure on chart fonts is a slash where a 7
+    # belongs, as the legacy engine's is a question mark. A slash that is really
+    # a bass note is split off before any of this runs, so the two readings do
+    # not compete.
+    "7": "?T1lIi|!j)¡í7ƒ/",
     "b": "PW6&Þþ",
     "#": "H+ﬀ",
     "m": "nrhМ",
@@ -119,10 +124,15 @@ def repair_chord_symbol(text: str, max_cost_per_char: float = _MAX_COST_PER_CHAR
     if not stripped or stripped[0] not in _ROOTS:
         return ChordRepair(text, None)
 
-    root = stripped[0]
+    # "C/G" is a C chord over a G, and "A/" is an A7 whose seven came back as a
+    # slash. Only a bare note name after the slash makes it a bass, so the two
+    # readings never have to be guessed between.
+    body, bass = _split_bass(stripped)
+
+    root = body[0]
     # Specks between the root and its accidental are common ("E'P" for E flat),
     # so clear them before deciding whether an accidental is present.
-    rest = stripped[1:].lstrip("".join(_NOISE))
+    rest = body[1:].lstrip("".join(_NOISE))
 
     accidental = ""
     if rest:
@@ -142,8 +152,33 @@ def repair_chord_symbol(text: str, max_cost_per_char: float = _MAX_COST_PER_CHAR
         # Two readings fit equally well; guessing between them is not repair.
         return ChordRepair(text, None)
 
-    repaired = f"{root}{accidental}{quality}"
+    repaired = f"{root}{accidental}{quality}{bass}"
     return ChordRepair(text, repaired, cost=cost, changed=repaired != raw)
+
+
+def _split_bass(text: str) -> tuple[str, str]:
+    """Split a trailing slash bass off, as ``("Dm7", "/F")``.
+
+    Only a bare note name counts. That keeps "6/9" and "Dm7/b5" -- where the
+    slash is part of the quality -- and "A/" -- where it is a mangled seven --
+    out of the bass reading.
+    """
+    slash = text.rfind("/")
+    if slash <= 0:
+        return text, ""
+
+    tail = text[slash + 1 :].strip()
+    if not tail or len(tail) > 2 or tail[0] not in _ROOTS:
+        return text, ""
+
+    if len(tail) == 1:
+        return text[:slash], f"/{tail}"
+
+    accidental = _ACCIDENTAL_FOR.get(tail[1])
+    # "/AB" is two note names, which is not a thing anyone writes.
+    if accidental is None or tail[1] in _ROOTS:
+        return text, ""
+    return text[:slash], f"/{tail[0]}{accidental}"
 
 
 def _best_quality(
@@ -198,6 +233,44 @@ def _distance(wanted: str, observed: str) -> float:
         previous = current
 
     return previous[columns]
+
+
+def music21_figure(figure: str) -> str:
+    """Spell a chord figure the way music21 parses one.
+
+    music21 writes a flat as ``-``, and its figure parser does not accept ``b``
+    in that position: given ``"Bb"`` it reads the ``b`` as a chord abbreviation,
+    finds no such abbreviation, and raises. Only an accidental directly after a
+    root or a bass note is rewritten, so the ``b`` in ``Dm7b5`` -- which really
+    is part of the quality -- is left alone.
+
+    >>> music21_figure("Bb/D")
+    'B-/D'
+    >>> music21_figure("Dm7b5")
+    'Dm7b5'
+    """
+    return _FLAT_ROOT.sub(r"\1-", figure)
+
+
+_FLAT_ROOT = re.compile(r"(?:(?<=^)|(?<=/))([A-G])b")
+
+
+def chord_symbol(figure: str):
+    """Build a :class:`music21.harmony.ChordSymbol`, or ``None`` if it will not.
+
+    Every path that turns recovered text into harmony goes through here, so the
+    flat-spelling difference is handled once rather than at each call site --
+    and a figure music21 rejects for any other reason is dropped rather than
+    raised, because leaving the text alone is always the safe outcome.
+    """
+    from music21 import harmony
+
+    for candidate in dict.fromkeys([figure, music21_figure(figure)]):
+        try:
+            return harmony.ChordSymbol(candidate)
+        except Exception:
+            continue
+    return None
 
 
 def repair_all(texts: list[str]) -> list[ChordRepair]:
@@ -316,7 +389,7 @@ def promote_chord_symbols(score, only_above_staff: bool = True) -> tuple[int, li
 
     Returns the number promoted and a note for each spelling that changed.
     """
-    from music21 import expressions, harmony
+    from music21 import expressions
 
     promoted = 0
     notes: list[str] = []
@@ -332,9 +405,8 @@ def promote_chord_symbols(score, only_above_staff: bool = True) -> tuple[int, li
         if not repair.repaired:
             continue
 
-        try:
-            symbol = harmony.ChordSymbol(repair.repaired)
-        except Exception:
+        symbol = chord_symbol(repair.repaired)
+        if symbol is None:
             # music21 could not build a chord from a figure our grammar
             # accepted; leaving the text alone is the safe outcome.
             continue

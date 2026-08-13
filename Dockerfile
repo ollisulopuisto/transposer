@@ -55,11 +55,15 @@ RUN apt-get update \
       libglib2.0-0 \
       fonts-dejavu-core \
       openjdk-${JDK_VERSION}-jre-headless \
+      tesseract-ocr \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=audiveris-build /opt/audiveris /opt/audiveris
 
-# Tesseract language data that includes the legacy engine Audiveris initialises.
+# Tesseract language data. Audiveris initialises the *legacy* engine, so this
+# file has to be the full one from the tessdata repo rather than tessdata_fast;
+# transposer's own chord-band pass then reads the same file with --oem 1 for the
+# LSTM recogniser, which is the half Audiveris never asks for.
 RUN mkdir -p /opt/tessdata \
  && curl -fsSLo /opt/tessdata/eng.traineddata \
       https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/eng.traineddata

@@ -190,6 +190,72 @@ def test_promotion_can_be_told_to_ignore_placement():
     assert promoted == 1
 
 
+def test_a_bare_flat_triad_becomes_a_chord_symbol():
+    """music21 will not build a ChordSymbol from the figure "Bb".
+
+    It reads the "b" as a chord abbreviation rather than an accidental and
+    raises, so a chart's Bb, Eb and Ab -- the commonest chords in the flat keys
+    a horn player transposes out of -- were being read, repaired, and then
+    silently dropped on the way into the score.
+    """
+    for figure, root in [("Bb", "B-"), ("Eb", "E-"), ("Ab", "A-"), ("Db", "D-")]:
+        score = build_score([(figure, 31)])
+        promoted, _ = promote_chord_symbols(score)
+        assert promoted == 1, figure
+
+        (symbol,) = list(score.recurse().getElementsByClass(m21.harmony.ChordSymbol))
+        assert symbol.root().name == root
+
+
+def test_flat_chords_with_a_quality_still_work():
+    score = build_score([("Bbm7", 31)])
+    assert promote_chord_symbols(score)[0] == 1
+    (symbol,) = list(score.recurse().getElementsByClass(m21.harmony.ChordSymbol))
+    assert symbol.root().name == "B-"
+    assert symbol.chordKind == "minor-seventh"
+
+
+# -- slashes: a seven, or a bass note -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("observed", "expected"),
+    [
+        ("A/", "A7"),
+        ("Fm/", "Fm7"),
+        ("Cmaj/", "Cmaj7"),
+        ("Gm/", "Gm7"),
+        ("Dm7/b5", "Dm7b5"),
+    ],
+)
+def test_a_slash_where_a_seven_should_be(observed, expected):
+    """The LSTM engine's signature failure on chart fonts, as the legacy
+    engine's is a question mark."""
+    assert repair_chord_symbol(observed).repaired == expected
+
+
+@pytest.mark.parametrize(
+    "text", ["C/G", "F/A", "Dm7/F", "Bb/D", "G7/B", "Am/C", "F#m7/C#"]
+)
+def test_a_slash_bass_note_is_kept(text):
+    """A chart's C/G is a C chord over a G, not a mangled C7."""
+    repair = repair_chord_symbol(text)
+    assert repair.repaired == text
+    assert not repair.changed
+
+
+def test_a_slash_chord_becomes_a_chord_symbol_with_that_bass():
+    score = build_score([("Bb/D", 31)])
+    assert promote_chord_symbols(score)[0] == 1
+    (symbol,) = list(score.recurse().getElementsByClass(m21.harmony.ChordSymbol))
+    assert symbol.root().name == "B-"
+    assert symbol.bass().name == "D"
+
+
+def test_a_slash_followed_by_nonsense_is_not_a_bass_note():
+    assert repair_chord_symbol("C/Somewhere").repaired is None
+
+
 # -- merging two recognition passes -------------------------------------
 
 
