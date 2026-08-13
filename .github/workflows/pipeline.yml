@@ -56,8 +56,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Whenever the build is going to push. Gating this on a push event alone
+      # left a manually dispatched run building fine and then failing at the
+      # registry with an anonymous 403.
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
