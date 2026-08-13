@@ -322,6 +322,52 @@ def test_a_slash_followed_by_nonsense_is_not_a_bass_note():
     assert repair_chord_symbol("C/Somewhere").repaired is None
 
 
+# -- several chords in one text element ----------------------------------
+
+
+def test_two_chords_in_one_text_element_are_both_promoted():
+    """OCR groups symbols that sit close together into one string.
+
+    "Gm? C7" is two chords a bar apart, and as a whole string it is not a chord
+    at all -- so the grammar rejected it and it was engraved verbatim, question
+    mark and all, in the middle of the score.
+    """
+    part = m21.stream.Part()
+    measure = m21.stream.Measure(number=1)
+    measure.insert(0, m21.meter.TimeSignature("4/4"))
+    measure.insert(0, make_text("Gm? C7", absolute_y=32))
+    measure.append(m21.note.Note("c4", quarterLength=4))
+    part.append(measure)
+    score = m21.stream.Score()
+    score.insert(0, part)
+
+    promoted, notes = promote_chord_symbols(score)
+    assert promoted == 2, notes
+
+    symbols = sorted(
+        score.recurse().getElementsByClass(m21.harmony.ChordSymbol),
+        key=lambda s: s.offset,
+    )
+    assert [s.figure for s in symbols] == ["Gm7", "C7"]
+    # Spread across the bar, not stacked on beat one.
+    assert float(symbols[0].offset) == 0.0
+    assert float(symbols[1].offset) == 2.0
+    assert not list(score.recurse().getElementsByClass(m21.expressions.TextExpression))
+
+
+def test_a_group_is_only_split_when_every_part_is_a_chord():
+    """"Some - where" is three tokens and none of them is a chord."""
+    score = build_score([("Some - where", 32)])
+    promoted, _ = promote_chord_symbols(score)
+    assert promoted == 0
+    assert list(score.recurse().getElementsByClass(m21.expressions.TextExpression))
+
+
+def test_a_group_with_one_unreadable_part_is_left_alone():
+    score = build_score([("Gm? xyzzy", 32)])
+    assert promote_chord_symbols(score)[0] == 0
+
+
 # -- merging two recognition passes -------------------------------------
 
 

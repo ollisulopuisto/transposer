@@ -37,6 +37,7 @@ class CleanupReport:
     key_changes_dropped: int = 0
     credits_removed: int = 0
     text_removed: int = 0
+    lyrics_attached: int = 0
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -47,6 +48,7 @@ class CleanupReport:
             or self.key_changes_dropped
             or self.credits_removed
             or self.text_removed
+            or self.lyrics_attached
         )
 
 
@@ -286,6 +288,7 @@ def clean_score(
     drop_text: bool = False,
     fix_metadata: bool = True,
     repair_chords: bool = True,
+    attach_text_lyrics: bool = True,
 ) -> CleanupReport:
     """Run the in-memory cleanup passes and report what changed."""
     report = CleanupReport()
@@ -313,11 +316,32 @@ def clean_score(
     report.key_changes_dropped = dropped
     report.notes += notes
 
-    if drop_text:
-        report.text_removed = drop_unparsed_text(score)
-        if report.text_removed:
+    if attach_text_lyrics:
+        from .lyrics import attach_lyrics, drop_debris
+
+        report.lyrics_attached = attach_lyrics(score)
+        if report.lyrics_attached:
             report.notes.append(
-                f"removed {report.text_removed} unreadable text item(s) from the page"
+                f"attached {report.lyrics_attached} piece(s) of recognised text to "
+                "the notes they sit under, as lyrics; they were floating words "
+                "carrying coordinates from the page they were read off, which do "
+                "not survive re-engraving"
+            )
+
+        debris = drop_debris(score)
+        if debris:
+            report.text_removed += debris
+            report.notes.append(
+                f"removed {debris} one- or two-character fragment(s) left above "
+                "the staff by the text recogniser"
+            )
+
+    if drop_text:
+        removed = drop_unparsed_text(score)
+        report.text_removed += removed
+        if removed:
+            report.notes.append(
+                f"removed {removed} unreadable text item(s) from the page"
             )
 
     if fix_metadata:

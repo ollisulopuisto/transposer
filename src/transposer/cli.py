@@ -205,6 +205,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="do not re-spell chord symbols the text recogniser mangled",
     )
     transpose.add_argument(
+        "--keep-text-floating",
+        dest="attach_text_lyrics",
+        action="store_false",
+        help=(
+            "do not attach recognised words below the staff to the notes they "
+            "sit under. They stay as free text carrying coordinates from the "
+            "page they were read off, which re-engraving invalidates."
+        ),
+    )
+    transpose.add_argument(
         "--drop-text",
         action="store_true",
         help="delete floating text that OMR could not read (garbled lyrics)",
@@ -294,6 +304,7 @@ def _cmd_transpose(args: argparse.Namespace) -> int:
         repair_chords=args.repair_chords,
         chord_pass=args.chord_pass,
         chord_ocr=args.chord_ocr,
+        attach_text_lyrics=args.attach_text_lyrics,
         chord_ocr_confidence=args.chord_ocr_confidence,
         preprocess=args.preprocess,
         target_interline=args.target_interline,

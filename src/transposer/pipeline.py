@@ -49,6 +49,7 @@ class PipelineOptions:
     repair_chords: bool = True
     chord_pass: bool = False
     chord_ocr: bool = True
+    attach_text_lyrics: bool = True
     chord_ocr_confidence: float = MIN_CONFIDENCE
     paper: str = "a4"
     landscape: bool = False
@@ -135,6 +136,7 @@ def run(
         key_changes=options.key_changes,
         drop_text=options.drop_text,
         repair_chords=options.repair_chords,
+        attach_text_lyrics=options.attach_text_lyrics,
     )
 
     # A second recognition pass tuned for text. Binarising sharpens chord
@@ -157,6 +159,7 @@ def run(
                 drop_text=False,
                 fix_metadata=False,
                 repair_chords=options.repair_chords,
+                attach_text_lyrics=False,
             )
             merged, merge_notes = merge_chord_symbols(score, text_score)
             cleanup.chords_promoted += merged

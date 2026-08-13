@@ -265,6 +265,38 @@ def find_barlines(
     ]
 
 
+def measure_bounds_from_widths(
+    widths: list[float | None], left: float, right: float
+) -> list[float] | None:
+    """Measure boundaries from the engraved widths MusicXML records.
+
+    This is the best source there is, and it comes free with the recognition:
+    ``<measure width="...">`` is what the engine measured off the page, so the
+    proportions are the real ones. Engravers do not space bars equally -- the
+    first bar of a system carries the clef, the key signature and often a
+    repeat, and can be half again as wide as its neighbours -- so an even
+    division puts a chord written over bar 1 into bar 2.
+
+    Returns ``None`` when any width is missing, which is the signal to fall
+    back to the detected barlines.
+    """
+    if not widths or any(not width for width in widths):
+        return None
+
+    total = float(sum(widths))
+    if total <= 0:
+        return None
+
+    span = right - left
+    bounds = [float(left)]
+    running = 0.0
+    for width in widths:
+        running += float(width)
+        bounds.append(left + span * running / total)
+    bounds[-1] = float(right)
+    return bounds
+
+
 def measure_bounds(
     barlines: list[int], left: float, right: float, count: int
 ) -> list[float]:
@@ -641,7 +673,16 @@ def apply_chords(score, page: list[StaffChords]) -> tuple[int, list[str]]:
         if not entry.chords:
             continue
 
-        bounds = measure_bounds(
+        # The engraved widths first: they are what the engine measured off this
+        # very page, so they beat anything re-derived from the pixels. Detected
+        # barlines are the fallback, and on a busy page there are far more of
+        # them than there are bars -- stems, repeat signs and double bars all
+        # read as one.
+        bounds = measure_bounds_from_widths(
+            [getattr(measure, "layoutWidth", None) for measure in measures],
+            left=entry.staff.left,
+            right=entry.staff.right,
+        ) or measure_bounds(
             entry.barlines,
             left=entry.staff.left,
             right=entry.staff.right,

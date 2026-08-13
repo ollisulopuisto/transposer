@@ -416,12 +416,12 @@ def promote_chord_symbols(score, only_above_staff: bool = True) -> tuple[int, li
         if only_above_staff and not is_above_staff(element):
             continue
 
-        repair = repair_chord_symbol(content)
-        if not repair.repaired:
+        repairs = _read_as_chords(content)
+        if not repairs:
             continue
 
-        symbol = chord_symbol(repair.repaired)
-        if symbol is None:
+        symbols = [chord_symbol(repair.repaired) for repair in repairs]
+        if any(symbol is None for symbol in symbols):
             # music21 could not build a chord from a figure our grammar
             # accepted; leaving the text alone is the safe outcome.
             continue
@@ -429,12 +429,67 @@ def promote_chord_symbols(score, only_above_staff: bool = True) -> tuple[int, li
         holder = element.activeSite
         if holder is None:
             continue
-        offset = element.offset
-        holder.remove(element)
-        holder.insert(offset, symbol)
-        promoted += 1
 
-        if repair.changed:
-            notes.append(f"read chord symbol {content!r} as {repair.repaired!r}")
+        # Measured before the element leaves the stream: once it is removed it
+        # has no measure to ask about the length of a bar.
+        offset = element.offset
+        spread = _spread(element, len(symbols))
+
+        holder.remove(element)
+        for index, symbol in enumerate(symbols):
+            holder.insert(offset + index * spread, symbol)
+            promoted += 1
+
+        for repair in repairs:
+            if repair.changed:
+                notes.append(
+                    f"read chord symbol {repair.original!r} as {repair.repaired!r}"
+                )
+        if len(repairs) > 1:
+            notes.append(
+                f"read {content!r} as {len(repairs)} chord symbols, spread across "
+                "the bar"
+            )
 
     return promoted, notes
+
+
+def _read_as_chords(content: str) -> list[ChordRepair]:
+    """Read one text element as one chord, or as several written side by side.
+
+    OCR groups symbols that sit close together into a single string, so a bar
+    carrying two chords can arrive as ``"Gm? C7"``. As a whole that is not a
+    chord and the grammar rejects it -- which is right, but it left the string
+    to be engraved verbatim in the middle of the score.
+
+    Splitting is only allowed when *every* part reads as a chord. One
+    unreadable part means the grouping was not two chords, and a partial
+    reading would invent harmony that is not there.
+    """
+    whole = repair_chord_symbol(content)
+    if whole.repaired:
+        return [whole]
+
+    parts = content.split()
+    if len(parts) < 2 or len(parts) > 4:
+        return []
+
+    repairs = [repair_chord_symbol(part) for part in parts]
+    if all(repair.repaired for repair in repairs):
+        return repairs
+    return []
+
+
+def _spread(element, count: int) -> float:
+    """How far apart to place chords that arrived as one string.
+
+    They were written across a bar, so they are placed across it. Without a
+    measure to measure, they go a beat apart.
+    """
+    from music21 import stream
+
+    if count < 2:
+        return 0.0
+    measure = element.getContextByClass(stream.Measure)
+    duration = float(measure.barDuration.quarterLength) if measure else float(count)
+    return duration / count

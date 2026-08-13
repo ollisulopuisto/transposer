@@ -29,6 +29,8 @@ There is also a web UI (`transposer serve`) and a Docker image.
 * **Repairs** the mistakes OMR reliably makes, and tells you about each one.
 * **Re-reads the chord band** with Tesseract's LSTM engine, which finds the
   symbols the OMR engine never proposed at all — on a chart, most of them.
+* **Puts the words back on the notes**, so lyrics an engine handed back as
+  free-floating text lay out as verses instead of piling up.
 * **Measures** the staff-line spacing and scales the page to what the engine
   wants, instead of guessing at a dpi number.
 * **Transposes** notes, key signatures, chord symbols, and chord names that OMR
@@ -235,6 +237,7 @@ The relevant flags:
 | `--binarize` | sharper text, softer noteheads: better chords, worse notes |
 | `--chord-pass` | run recognition twice and take chords from the binarised pass |
 | `--no-chord-ocr` | skip the LSTM re-read of the band above each staff |
+| `--keep-text-floating` | leave recognised words as free text instead of attaching them as lyrics |
 | `--no-preprocess` | hand the scan to the engine untouched |
 | `--no-deskew`, `--no-sharpen` | turn off individual steps |
 
@@ -298,6 +301,15 @@ so — a chord in the wrong bar is worse than a chord that was never read.
 
 Every candidate still goes through the same chord grammar as the repair pass, so
 prose is rejected the same way.
+
+Where a chord lands is decided by the engraved measure widths MusicXML records,
+not by an even division of the system and not by barlines re-detected from the
+pixels. Those widths are what the engine measured off this very page, and they
+are the only source that knows the first bar of a system is half again as wide
+as its neighbours because it carries the clef, the key signature and a repeat.
+An even division puts a chord written over bar 1 into bar 2. Detected barlines
+are the fallback: on a busy page there are three times as many candidates as
+there are bars, because stems, repeat signs and double bars all read as one.
 
 This needs the `tesseract` binary on `PATH` (`brew install tesseract`,
 `apt install tesseract-ocr`; the Docker image has it). Without it the pass is
@@ -384,6 +396,7 @@ src/transposer/
   chordtext.py       chord symbols that arrived as plain text
   chordocr.py        re-spelling chord symbols OCR mangled
   chordband.py       re-reading the band above each staff with Tesseract LSTM
+  lyrics.py          putting recognised words back on the notes they belong to
   cleanup.py         repairs for common OMR mistakes
   ingest.py          input normalisation, PDF rasterising, PDF merging
   pipeline.py        the end-to-end job

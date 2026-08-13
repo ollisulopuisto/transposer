@@ -93,6 +93,7 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
         binarize: bool = Form(False),
         chord_pass: bool = Form(False),
         chord_ocr: bool = Form(True),
+        attach_text_lyrics: bool = Form(True),
     ) -> JSONResponse:
         data = await file.read()
         if not data:
@@ -123,6 +124,7 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
             binarize=binarize,
             chord_pass=chord_pass,
             chord_ocr=chord_ocr,
+            attach_text_lyrics=attach_text_lyrics,
         )
 
         job = store.submit(file.filename or "upload", data, options)

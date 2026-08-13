@@ -154,6 +154,68 @@ def test_finds_the_barlines_that_were_drawn():
         assert found == pytest.approx(want, abs=4)
 
 
+def test_bounds_follow_the_engraved_measure_widths():
+    """MusicXML records each measure's engraved width, and engravers do not
+    space bars equally: the first bar of a system carries the clef, the key
+    signature and often a repeat, so it can be half again as wide as its
+    neighbours. Dividing the system evenly puts a chord written over bar 1 into
+    bar 2.
+    """
+    bounds = chordband.measure_bounds_from_widths([305, 287, 166, 102, 190], 137, 2273)
+    assert bounds[0] == 137
+    assert bounds[-1] == 2273
+    # Bar 1 is 305/1050 of the system, not a fifth of it.
+    assert bounds[1] == pytest.approx(137 + (2273 - 137) * 305 / 1050, abs=1)
+
+
+def test_widths_that_are_missing_or_zero_are_refused():
+    assert chordband.measure_bounds_from_widths([], 0, 100) is None
+    assert chordband.measure_bounds_from_widths([100, None, 50], 0, 100) is None
+    assert chordband.measure_bounds_from_widths([0, 0], 0, 100) is None
+
+
+def test_engraved_widths_beat_barlines_and_equal_division():
+    """The whole point: a system whose barlines are over-detected still places
+    chords correctly, because the score knows the real proportions."""
+    from music21 import layout, meter, note, stream
+
+    part = stream.Part()
+    for number, width in enumerate([300, 100, 100, 100], start=1):
+        measure = stream.Measure(number=number)
+        if number == 1:
+            measure.insert(0, meter.TimeSignature("4/4"))
+            measure.insert(0, layout.SystemLayout(isNew=True))
+        measure.layoutWidth = width
+        measure.insert(0, note.Rest(quarterLength=4.0))
+        part.append(measure)
+    score = stream.Score()
+    score.insert(0, part)
+
+    # Barlines here are nonsense -- stems and a repeat sign read as barlines.
+    page = [
+        chordband.StaffChords(
+            staff=make_staff(0, left=0, right=600),
+            barlines=[0, 40, 55, 70, 210, 300, 380, 450, 600],
+            chords=[
+                # x=250 is inside bar 1, which is half the system wide.
+                chordband.BandChord("C", "C", staff_index=0, x=250, confidence=90),
+            ],
+        ),
+    ]
+
+    added, notes = chordband.apply_chords(score, page)
+    assert added == 1, notes
+
+    from music21 import harmony
+
+    placed = {
+        m.number
+        for m in score.parts[0].getElementsByClass("Measure")
+        if list(m.getElementsByClass(harmony.ChordSymbol))
+    }
+    assert placed == {1}, "equal division would have put this in bar 2"
+
+
 def test_measure_bounds_fall_back_to_equal_division():
     """When barline detection disagrees with the score, geometry still works."""
     bounds = chordband.measure_bounds([100, 500], left=100, right=500, count=4)
