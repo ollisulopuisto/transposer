@@ -170,6 +170,12 @@ jobs:
         id: vars
         run: echo "version=$(date +'%y.%m.%d').$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
+      # Required for `cache-to: type=gha`. Without it buildx runs on the default
+      # `docker` driver, which cannot export a cache at all - and it fails at
+      # the very end of setup with "Cache export is not supported for the docker
+      # driver", after the login has already succeeded.
+      - uses: docker/setup-buildx-action@v3
+
       # No platforms: and no QEMU - the runner IS aarch64, so a plain build
       # produces an arm64 image and nothing is emulated.
       - name: Build and push arm64
