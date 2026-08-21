@@ -128,3 +128,71 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             /opt/stacks/scripts/deploy.sh modulaattori deploy ${{ needs.build-and-push.outputs.version }}
+
+  # The arm64 half, built natively on a GitHub-hosted ARM runner.
+  #
+  # modulaattori moves to oraakkeli3, an Ampere A1, so this image must exist for
+  # aarch64. Three ways to get there, and this repo can only use one of them:
+  #
+  #   self-hosted on the A1  - NO. This repo is PUBLIC, so anyone can open a
+  #                            pull request, and our runner shares a disk with
+  #                            production secrets. See agents.md 6b.
+  #   QEMU on ubuntu-latest  - works, but this image builds Audiveris from
+  #                            source with gradle. 197s natively on the A1;
+  #                            emulated it is the slowest thing in the estate.
+  #   ubuntu-24.04-arm       - native aarch64, 4 cores, and FREE for public
+  #                            repositories. Probed 2026-08-21 before relying
+  #                            on it, because "free for public repos" is a
+  #                            policy that can change under us.
+  #
+  # Being public is usually the thing that costs us options here. This is the
+  # one place it buys one.
+  build-arm64:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Same CalVer as build-and-push
+        id: vars
+        run: echo "version=$(date +'%y.%m.%d').$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+
+      # No platforms: and no QEMU - the runner IS aarch64, so a plain build
+      # produces an arm64 image and nothing is emulated.
+      - name: Build and push arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+          tags: ghcr.io/ollisulopuisto/modulaattori:${{ steps.vars.outputs.version }}-arm64
+
+      # Both arches under the tags the host pins. The amd64 images were pushed
+      # by build-and-push; this replaces those tags with manifest lists that
+      # CONTAIN them, so an x86 host resolves to the identical digest it had.
+      - name: Publish multi-arch manifests
+        env:
+          VER: ${{ steps.vars.outputs.version }}
+        run: |
+          for TAG in "$VER" latest; do
+            docker buildx imagetools create \
+              --tag "ghcr.io/ollisulopuisto/modulaattori:$TAG" \
+              "ghcr.io/ollisulopuisto/modulaattori:$VER" \
+              "ghcr.io/ollisulopuisto/modulaattori:$VER-arm64"
+            echo "published multi-arch :$TAG"
+          done
