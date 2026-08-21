@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from ..errors import RenderFailedError
-from .base import PageSize, RenderResult, Renderer
+from .base import PageSize, Renderer, RenderResult
 from .musescore import MuseScoreRenderer
 from .verovio_renderer import VerovioRenderer
 
 __all__ = [
+    "RENDERERS",
+    "MuseScoreRenderer",
     "PageSize",
     "RenderResult",
     "Renderer",
     "VerovioRenderer",
-    "MuseScoreRenderer",
-    "RENDERERS",
+    "describe_renderers",
     "get_renderer",
     "select_renderer",
-    "describe_renderers",
 ]
 
 RENDERERS: dict[str, Callable[[], Renderer]] = {

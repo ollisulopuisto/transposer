@@ -16,9 +16,27 @@ SCORE_SUFFIXES = {".xml", ".musicxml", ".mxl", ".mid", ".midi", ".abc", ".krn"}
 PDF_SUFFIXES = {".pdf"}
 
 #: Resolution used when rasterising a PDF for engines that only take images.
-#: 300 dpi is the sweet spot: below ~200 staff lines start merging, above ~400
-#: recognition gets slower without getting better.
+#:
+#: This is a floor, not a target. A PDF that is a wrapper around a scanned
+#: image has a fixed amount of detail in it, and asking for more dpi than the
+#: embedded image holds just interpolates. What actually matters downstream is
+#: staff-line spacing in pixels, which :mod:`transposer.preprocess` measures and
+#: corrects; this number only needs to be high enough not to throw information
+#: away on the way in.
 DEFAULT_DPI = 300
+
+#: Pages a single upload may contain.
+#:
+#: Every page is rasterised and then handed to a recognition engine that takes
+#: minutes over each one, so this is the difference between a scan of a song and
+#: a request to occupy the machine. Generous for real music; a book is not a
+#: lead sheet.
+MAX_PAGES = 40
+
+#: Pixels a single page may decompress to. A few kilobytes of PNG can expand to
+#: gigabytes of raster, which is a cheap way to exhaust memory from a small
+#: upload. 80 megapixels is an A3 page at 600 dpi.
+MAX_PIXELS = 80_000_000
 
 
 @dataclass
@@ -39,20 +57,29 @@ class IngestedInput:
     def is_score(self) -> bool:
         return self.kind == "score"
 
-    def rasterize(self, dpi: int = DEFAULT_DPI) -> list[Path]:
+    def rasterize(
+        self, dpi: int = DEFAULT_DPI, max_pages: int = MAX_PAGES
+    ) -> list[Path]:
         """Return the input as a list of PNG pages, converting if needed."""
         if self.pages:
             return self.pages
 
         if self.kind == "image":
+            guard_image_size(self.path)
             self.pages = [_normalise_image(self.path, self.workdir)]
         elif self.kind == "pdf":
-            self.pages = pdf_to_images(self.path, self.workdir / "pages", dpi=dpi)
+            self.pages = pdf_to_images(
+                self.path, self.workdir / "pages", dpi=dpi, max_pages=max_pages
+            )
         else:
             raise UnsupportedInputError(
                 f"{self.path.name} is a score file, not something to rasterize"
             )
         return self.pages
+
+    def replace_pages(self, pages: list[Path]) -> None:
+        """Swap in a processed version of the rasterised pages."""
+        self.pages = list(pages)
 
 
 def classify(path: Path) -> str:
@@ -90,12 +117,46 @@ def ingest(path: Path, workdir: Path) -> IngestedInput:
     return IngestedInput(path=local, kind=kind, workdir=workdir)
 
 
-def pdf_to_images(pdf_path: Path, out_dir: Path, dpi: int = DEFAULT_DPI) -> list[Path]:
+def guard_image_size(path: Path, max_pixels: int = MAX_PIXELS) -> None:
+    """Refuse an image that decompresses to an unreasonable number of pixels.
+
+    Read from the header rather than by decoding, so a decompression bomb is
+    rejected before it costs anything.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except Exception as exc:
+        raise UnsupportedInputError(f"{path.name} is not a readable image: {exc}") from exc
+
+    if width * height > max_pixels:
+        raise UnsupportedInputError(
+            f"{path.name} is {width}x{height} = {width * height / 1e6:.0f} megapixels, "
+            f"over the {max_pixels / 1e6:.0f} megapixel limit"
+        )
+
+
+def pdf_to_images(
+    pdf_path: Path,
+    out_dir: Path,
+    dpi: int = DEFAULT_DPI,
+    max_pages: int = MAX_PAGES,
+) -> list[Path]:
     """Rasterise every page of a PDF to a PNG."""
     import pymupdf  # imported lazily: it is the heaviest dependency we have
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    with pymupdf.open(pdf_path) as probe:
+        page_count = probe.page_count
+    if max_pages and page_count > max_pages:
+        raise UnsupportedInputError(
+            f"{pdf_path.name} has {page_count} pages, over the {max_pages} page "
+            "limit; every page is rasterised and recognised, which takes minutes each"
+        )
 
     written: list[Path] = []
     with pymupdf.open(pdf_path) as document:
@@ -107,6 +168,76 @@ def pdf_to_images(pdf_path: Path, out_dir: Path, dpi: int = DEFAULT_DPI) -> list
     if not written:
         raise UnsupportedInputError(f"{pdf_path.name} has no pages")
     return written
+
+
+def native_resolution(pdf_path: Path) -> float | None:
+    """The effective dpi of the largest image embedded in a PDF's first page.
+
+    A scan-in-a-PDF has a fixed pixel count; rendering it at a higher dpi than
+    this only interpolates. Returns ``None`` for a PDF whose first page is real
+    vector content, where resolution is a free choice.
+    """
+    import pymupdf
+
+    try:
+        with pymupdf.open(pdf_path) as document:
+            if document.page_count == 0:
+                return None
+            page = document[0]
+            images = page.get_images(full=True)
+            if not images:
+                return None
+            width_inches = page.rect.width / 72
+            if width_inches <= 0:
+                return None
+            widest = max(entry[2] for entry in images)
+            return widest / width_inches
+    except Exception:  # pragma: no cover - malformed PDFs are not our problem
+        return None
+
+
+#: The resolution Audiveris rasterises PDFs at. It is a fixed constant on its
+#: side, so a PDF we build for it has to declare page dimensions that make its
+#: render come back out at the pixel size we intended.
+PDF_ASSUMED_DPI = 300
+
+
+def images_to_pdf(
+    pages: list[Path], target: Path, assumed_dpi: int = PDF_ASSUMED_DPI
+) -> Path:
+    """Wrap page images back into a single PDF.
+
+    Engines that read PDFs treat one file as one book, so after preprocessing
+    has replaced the pages with enhanced images, rebundling keeps a multi-page
+    score together instead of splitting it into one book per page.
+
+    Page geometry matters here. A PDF page is measured in points, and an image
+    dropped onto a page sized at 72 dpi declares itself several times larger
+    than the paper it came from -- which an engine then re-rasterises at its own
+    resolution into something enormous. Sizing each page as if the image were
+    ``assumed_dpi`` keeps the round trip close to 1:1.
+    """
+    import pymupdf
+    from PIL import Image
+
+    if not pages:
+        raise ValueError("no pages to bundle")
+
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    scale = 72 / assumed_dpi
+
+    with pymupdf.open() as document:
+        for page in pages:
+            # Pixel dimensions, not PyMuPDF's page rect: opening an image as a
+            # document converts it to points using whatever dpi the file's
+            # metadata claims, which is not what we are sizing against.
+            with Image.open(page) as image:
+                width, height = image.size
+            sheet = document.new_page(width=width * scale, height=height * scale)
+            sheet.insert_image(sheet.rect, filename=str(page))
+        document.save(target, deflate=True)
+    return target
 
 
 def merge_pdfs(parts: list[Path], target: Path) -> Path:

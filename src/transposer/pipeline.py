@@ -17,10 +17,14 @@ from pathlib import Path
 
 from music21 import converter, stream
 
+from .chordband import MIN_CONFIDENCE, read_and_apply
+from .chordocr import merge_chord_symbols
 from .cleanup import CleanupReport, clean_score, strip_credits
-from .ingest import DEFAULT_DPI, ingest
+from .errors import TransposerError
+from .ingest import DEFAULT_DPI, images_to_pdf, ingest, native_resolution
 from .keys import Direction
 from .omr import OmrResult, select_engine
+from .preprocess import TARGET_INTERLINE, PreprocessReport, enhance_pages
 from .render import select_renderer
 from .render.base import RenderResult, resolve_page_size
 from .transpose import TranspositionReport, transpose_score
@@ -42,12 +46,23 @@ class PipelineOptions:
     key_changes: str = "auto"
     drop_text: bool = False
     strip_credits: bool = True
+    repair_chords: bool = True
+    chord_pass: bool = False
+    chord_ocr: bool = True
+    attach_text_lyrics: bool = True
+    chord_ocr_confidence: float = MIN_CONFIDENCE
     paper: str = "a4"
     landscape: bool = False
     scale: int = 40
     dpi: int = DEFAULT_DPI
     keep_workdir: bool = False
     title_suffix: str | None = None
+    # Image enhancement, applied before recognition.
+    preprocess: bool = True
+    target_interline: int = TARGET_INTERLINE
+    deskew: bool = True
+    sharpen: bool = True
+    binarize: bool = False
 
 
 @dataclass
@@ -63,6 +78,7 @@ class PipelineResult:
     render: RenderResult
     workdir: Path
     cleanup: CleanupReport = field(default_factory=CleanupReport)
+    preprocessing: list[PreprocessReport] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -106,18 +122,9 @@ def run(
             progress(stage, message)
 
     report("ingest", f"reading {source.name}")
-    ingested = ingest(source, workdir / "input")
-
-    engine = select_engine(ingested, options.engine)
-    report("omr", f"recognising with {engine.name}")
-    if not engine.accepts_pdf and ingested.kind == "pdf":
-        ingested.rasterize(dpi=options.dpi)
-    omr: OmrResult = engine.recognize(ingested, workdir)
-
-    report("parse", "parsing MusicXML")
-    score = converter.parse(str(omr.musicxml))
-    if not isinstance(score, stream.Score):
-        score = _as_score(score)
+    engine, omr, score, preprocessing, preprocess_notes, ingested = _recognise(
+        source, options, workdir, binarize=options.binarize, report=report
+    )
 
     source_copy = workdir / "recognised.musicxml"
     _preserve(omr.musicxml, source_copy)
@@ -128,7 +135,60 @@ def run(
         plain_clefs=options.plain_clefs,
         key_changes=options.key_changes,
         drop_text=options.drop_text,
+        repair_chords=options.repair_chords,
+        attach_text_lyrics=options.attach_text_lyrics,
     )
+
+    # A second recognition pass tuned for text. Binarising sharpens chord
+    # symbols and lyrics at the cost of noteheads, so the notes come from the
+    # first pass and only the chord symbols are taken from this one.
+    if options.chord_pass and engine.name != "passthrough" and not options.binarize:
+        report("chord-pass", "second recognition pass for chord symbols")
+        try:
+            _, _, text_score, _, _, _ = _recognise(
+                source,
+                options,
+                workdir / "chord-pass",
+                binarize=True,
+                report=lambda stage, message: None,
+            )
+            clean_score(
+                text_score,
+                plain_clefs=False,
+                key_changes="keep",
+                drop_text=False,
+                fix_metadata=False,
+                repair_chords=options.repair_chords,
+                attach_text_lyrics=False,
+            )
+            merged, merge_notes = merge_chord_symbols(score, text_score)
+            cleanup.chords_promoted += merged
+            cleanup.notes.extend(merge_notes)
+        except TransposerError as exc:
+            cleanup.notes.append(f"the chord-symbol pass did not run: {exc}")
+
+    # The OMR engines drive Tesseract's legacy classifier, which on a chord
+    # chart does not so much misread the symbols as never propose them. Reading
+    # the band above each staff directly, with the LSTM engine, finds the ones
+    # that never reached the MusicXML at all -- and because it works off the
+    # page rather than the recognised score, it is independent of what the
+    # engine got wrong.
+    if options.chord_ocr and engine.name != "passthrough":
+        report("chord-ocr", "reading the chord band with Tesseract's LSTM engine")
+        try:
+            pages = list(ingested.pages) or ingested.rasterize(dpi=options.dpi)
+        except TransposerError as exc:
+            pages = []
+            cleanup.notes.append(f"the chord-band pass did not run: {exc}")
+        if pages:
+            added, band_notes = read_and_apply(
+                score,
+                pages,
+                workdir=workdir / "chord-band",
+                min_confidence=options.chord_ocr_confidence,
+            )
+            cleanup.chords_promoted += added
+            cleanup.notes.extend(band_notes)
 
     report("transpose", f"transposing to {options.target}")
     transposed, transposition = transpose_score(
@@ -171,7 +231,8 @@ def run(
     )
 
     warnings = (
-        list(omr.warnings)
+        list(preprocess_notes)
+        + list(omr.warnings)
         + list(cleanup.notes)
         + list(transposition.warnings)
         + list(rendered.warnings)
@@ -187,10 +248,86 @@ def run(
         render=rendered,
         workdir=workdir,
         cleanup=cleanup,
+        preprocessing=preprocessing,
         warnings=warnings,
     )
     report("done", "finished")
     return result
+
+
+def _recognise(source: Path, options: PipelineOptions, workdir: Path, binarize: bool, report):
+    """Ingest, enhance and recognise one copy of the input."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    ingested = ingest(source, workdir / "input")
+    engine = select_engine(ingested, options.engine)
+
+    preprocessing: list[PreprocessReport] = []
+    notes: list[str] = []
+    if options.preprocess and not ingested.is_score:
+        report("preprocess", "measuring and enhancing the page")
+        preprocessing, notes = _preprocess(ingested, options, workdir, binarize=binarize)
+
+    report("omr", f"recognising with {engine.name}")
+    if not engine.accepts_pdf and ingested.kind == "pdf":
+        ingested.rasterize(dpi=options.dpi)
+    omr: OmrResult = engine.recognize(ingested, workdir)
+
+    report("parse", "parsing MusicXML")
+    score = converter.parse(str(omr.musicxml))
+    if not isinstance(score, stream.Score):
+        score = _as_score(score)
+
+    return engine, omr, score, preprocessing, notes, ingested
+
+
+def _preprocess(
+    ingested, options: PipelineOptions, workdir: Path, binarize: bool | None = None
+) -> tuple[list[PreprocessReport], list[str]]:
+    """Rasterise and enhance the input before recognition.
+
+    Two decisions happen here. First the rasterising resolution: a PDF that is
+    a wrapper around a scan holds a fixed number of pixels, and rendering it at
+    a higher dpi than that only interpolates -- badly, and then again when the
+    enhancement pass scales. So a scan is rendered at its own resolution and
+    resampled exactly once, by the step that knows what it is aiming for.
+
+    Second, the enhanced pages are bundled back into a PDF for engines that
+    read PDFs, so a multi-page score stays one document.
+    """
+    notes: list[str] = []
+
+    dpi = options.dpi
+    if ingested.kind == "pdf":
+        native = native_resolution(ingested.path)
+        if native and native < options.dpi:
+            dpi = max(72, round(native))
+            notes.append(
+                f"the PDF holds a scan at about {dpi} dpi, so it was read at that "
+                f"resolution rather than {options.dpi}; asking for more would only "
+                "interpolate"
+            )
+
+    pages = ingested.rasterize(dpi=dpi)
+    enhanced, reports = enhance_pages(
+        pages,
+        workdir / "enhanced",
+        target_interline=options.target_interline,
+        deskew=options.deskew,
+        sharpen=options.sharpen,
+        binarize=options.binarize if binarize is None else binarize,
+    )
+    ingested.replace_pages(enhanced)
+
+    for report in reports:
+        notes.extend(report.notes)
+    if reports:
+        notes.append("enhanced page 1: " + reports[0].summary())
+
+    if ingested.kind == "pdf":
+        bundled = images_to_pdf(enhanced, workdir / "enhanced" / "enhanced.pdf")
+        ingested.path = bundled
+
+    return reports, notes
 
 
 def cleanup(result: PipelineResult) -> None:

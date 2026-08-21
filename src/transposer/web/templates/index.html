@@ -168,6 +168,20 @@
           </select>
         </div>
         <div>
+          <label for="chord_pass">Chord symbols</label>
+          <select id="chord_pass" name="chord_pass">
+            <option value="false">one recognition pass</option>
+            <option value="true">two passes (slower, better chords)</option>
+          </select>
+        </div>
+        <div>
+          <label for="chord_ocr">Chord band OCR</label>
+          <select id="chord_ocr" name="chord_ocr">
+            <option value="true">read the band above each staff (LSTM)</option>
+            <option value="false">trust the OMR engine's chords only</option>
+          </select>
+        </div>
+        <div>
           <label for="landscape">Orientation</label>
           <select id="landscape" name="landscape">
             <option value="false">portrait</option>

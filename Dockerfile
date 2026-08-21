@@ -6,11 +6,16 @@
 #     docker build -t transposer .
 #     docker run --rm -p 8000:8000 transposer
 #
-# Audiveris' JDK requirement moves with its development branch; override with
-# --build-arg AUDIVERIS_REF=5.7.1 and a matching JDK if the default drifts.
+# Pin a release, not a branch. The development branch built fine and then died
+# in batch mode -- Scale's static initialiser asks the Swing application
+# framework for an instance that only exists once a GUI has launched, so every
+# headless run threw "Application is not launched" before reading a note.
+#
+# Audiveris' JDK requirement moves with its releases: 5.11.0 wants 25. Override
+# both together with --build-arg if you move the pin.
 
 ARG JDK_VERSION=25
-ARG AUDIVERIS_REF=development
+ARG AUDIVERIS_REF=5.11.0
 
 # --------------------------------------------------------------------------
 # Stage 1: build Audiveris
@@ -40,8 +45,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TRANSPOSER_AUDIVERIS=/opt/audiveris/bin/Audiveris \
     TESSDATA_PREFIX=/opt/tessdata \
-    TRANSPOSER_MOZART_DIR=/opt/mozart \
-    TRANSPOSER_DATA_DIR=/data
+    TRANSPOSER_DATA_DIR=/data \
+    TRANSPOSER_TRUST_FORWARDED=1
 
 # libcairo2 and the font stack are what CairoSVG needs to turn Verovio's SVG
 # into PDF; fonts-dejavu keeps lyrics and chord names from rendering as boxes.
@@ -49,28 +54,30 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
-      git \
       libcairo2 \
-      libgl1 \
-      libglib2.0-0 \
       fonts-dejavu-core \
       openjdk-${JDK_VERSION}-jre-headless \
+      tesseract-ocr \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=audiveris-build /opt/audiveris /opt/audiveris
 
-# Tesseract language data that includes the legacy engine Audiveris initialises.
+# Tesseract language data. Audiveris initialises the *legacy* engine, so this
+# file has to be the full one from the tessdata repo rather than tessdata_fast;
+# transposer's own chord-band pass then reads the same file with --oem 1 for the
+# LSTM recogniser, which is the half Audiveris never asks for.
 RUN mkdir -p /opt/tessdata \
  && curl -fsSLo /opt/tessdata/eng.traineddata \
       https://raw.githubusercontent.com/tesseract-ocr/tessdata/main/eng.traineddata
 
-# The Mozart engine, for clean printed single-staff music.
-RUN git clone --depth 1 https://github.com/aashrafh/Mozart.git /opt/mozart
-
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir '.[web,mozart]'
+# Audiveris only. Mozart's extras -- scikit-learn, OpenCV, matplotlib -- are
+# about a gigabyte of wheels for an engine that handles clean single-staff
+# treble-clef music and that Audiveris beats everywhere it applies. Install with
+# '.[web,mozart]' and set TRANSPOSER_MOZART_DIR if you want it back.
+RUN pip install --no-cache-dir '.[web]'
 
 RUN mkdir -p /data
 VOLUME ["/data"]

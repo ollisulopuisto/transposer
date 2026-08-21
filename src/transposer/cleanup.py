@@ -3,6 +3,8 @@
 OMR output is never clean, but its mistakes are not random -- a handful of them
 show up on almost every scan, and each has a safe automatic fix:
 
+* chord symbols the text recogniser mangled into ``Fm?`` or ``CT``, which on a
+  lead sheet are the whole point (see :mod:`transposer.chordocr`),
 * a plain treble clef read as an octave-displaced one, which silently moves a
   whole part an octave,
 * a one- or two-bar "modulation" caused by a smudge next to a barline, which a
@@ -19,30 +21,47 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from music21 import clef, key, stream
+
+
+@dataclass(frozen=True)
+class IncompleteMeasure:
+    """A bar holding less music than its time signature calls for."""
+
+    number: int
+    actual: float
+    expected: float
+
+    def describe(self) -> str:
+        return f"bar {self.number} ({self.actual:g} of {self.expected:g} beats)"
 
 
 @dataclass
 class CleanupReport:
     """What the cleanup passes changed."""
 
+    chords_promoted: int = 0
     clefs_flattened: int = 0
     key_changes_dropped: int = 0
     credits_removed: int = 0
     text_removed: int = 0
+    lyrics_attached: int = 0
+    incomplete: list[IncompleteMeasure] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
         return bool(
-            self.clefs_flattened
+            self.chords_promoted
+            or self.clefs_flattened
             or self.key_changes_dropped
             or self.credits_removed
             or self.text_removed
+            or self.lyrics_attached
         )
 
 
@@ -241,6 +260,47 @@ def drop_unparsed_text(score: stream.Stream, keep_chords: bool = True) -> int:
     return removed
 
 
+def incomplete_measures(
+    score: stream.Stream, tolerance: float = 0.01
+) -> list[IncompleteMeasure]:
+    """Bars whose contents do not fill them, in order.
+
+    This is the most useful thing a recognition report can say, because it is
+    the one mistake the pipeline cannot repair and the user can. A bar holding
+    two beats of a four-beat measure means notes were missed, and no amount of
+    downstream cleaning puts them back -- but "bar 4, bar 9, bar 13" tells
+    someone exactly which three bars to open in a notation editor.
+
+    It is measured off the score rather than scraped from an engine's log, so
+    it says the same thing whichever engine produced the music.
+
+    A pickup bar is deliberately short and is not reported. On a grand staff the
+    same bar is usually wrong in both hands, and it is listed once.
+    """
+    found: dict[int, IncompleteMeasure] = {}
+
+    for part in _parts_of(score):
+        for measure in part.getElementsByClass(stream.Measure):
+            if measure.number is None:
+                continue
+            # An anacrusis, and a bar an engine marked as deliberately partial,
+            # are written that way on purpose.
+            if getattr(measure, "paddingLeft", 0) or getattr(measure, "paddingRight", 0):
+                continue
+
+            expected = float(measure.barDuration.quarterLength)
+            actual = float(measure.duration.quarterLength)
+            if expected <= 0 or actual >= expected - tolerance:
+                continue
+
+            entry = IncompleteMeasure(int(measure.number), actual, expected)
+            # The shortest reading of a bar is the informative one.
+            if entry.number not in found or actual < found[entry.number].actual:
+                found[entry.number] = entry
+
+    return [found[number] for number in sorted(found)]
+
+
 def ensure_title(score: stream.Score) -> None:
     """Promote a movement name into the title when the title is empty.
 
@@ -281,9 +341,22 @@ def clean_score(
     key_changes: str = "auto",
     drop_text: bool = False,
     fix_metadata: bool = True,
+    repair_chords: bool = True,
+    attach_text_lyrics: bool = True,
 ) -> CleanupReport:
     """Run the in-memory cleanup passes and report what changed."""
     report = CleanupReport()
+
+    if repair_chords:
+        from .chordocr import promote_chord_symbols
+
+        report.chords_promoted, chord_notes = promote_chord_symbols(score)
+        if report.chords_promoted:
+            report.notes.append(
+                f"recovered {report.chords_promoted} chord symbol(s) from text the "
+                "recogniser could not parse"
+            )
+            report.notes.extend(chord_notes)
 
     if plain_clefs:
         report.clefs_flattened = flatten_octave_clefs(score)
@@ -297,16 +370,50 @@ def clean_score(
     report.key_changes_dropped = dropped
     report.notes += notes
 
-    if drop_text:
-        report.text_removed = drop_unparsed_text(score)
-        if report.text_removed:
+    if attach_text_lyrics:
+        from .lyrics import attach_lyrics, drop_debris
+
+        report.lyrics_attached = attach_lyrics(score)
+        if report.lyrics_attached:
             report.notes.append(
-                f"removed {report.text_removed} unreadable text item(s) from the page"
+                f"attached {report.lyrics_attached} piece(s) of recognised text to "
+                "the notes they sit under, as lyrics; they were floating words "
+                "carrying coordinates from the page they were read off, which do "
+                "not survive re-engraving"
+            )
+
+        debris = drop_debris(score)
+        if debris:
+            report.text_removed += debris
+            report.notes.append(
+                f"removed {debris} one- or two-character fragment(s) left above "
+                "the staff by the text recogniser"
+            )
+
+    if drop_text:
+        removed = drop_unparsed_text(score)
+        report.text_removed += removed
+        if removed:
+            report.notes.append(
+                f"removed {removed} unreadable text item(s) from the page"
             )
 
     if fix_metadata:
         ensure_title(score)
         report.notes += scrub_metadata(score)
+
+    # Reported last, and never repaired: these are the bars where the engine
+    # missed notes, and padding them with rests would silence the warning while
+    # leaving the music wrong.
+    report.incomplete = incomplete_measures(score)
+    if report.incomplete:
+        listed = ", ".join(entry.describe() for entry in report.incomplete)
+        report.notes.append(
+            f"{len(report.incomplete)} bar(s) hold less music than the time "
+            f"signature calls for, so notes were missed there: {listed}. "
+            "Nothing downstream can put them back -- open the MusicXML and "
+            "check those bars against the original."
+        )
 
     return report
 
