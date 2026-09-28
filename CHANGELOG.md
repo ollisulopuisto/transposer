@@ -2,6 +2,11 @@
 
 What each build of modulaattori contains, newest first. CI names a build `YY.MM.DD.N`, where N is the commit count (`git rev-list --count HEAD`, .github/workflows/pipeline.yml), so a heading names the build that commit produced. Sections before 2026-09-28 were written from git history, one per day, named after that day's last build. Add each change's entry here in the same commit, under the version its build will get.
 
+## [v26.09.28.22] - 2026-09-28
+
+### Fixed
+- **A job no longer says "done" while the upload is still on disk.** The job set its status first and deleted the upload's working copy afterwards, so anything polling for "done" could still find the user's music in `work/input` for a moment. The inputs are now deleted before the outcome is published. This race also failed CI on 2026-09-28, which blocked the v26.09.28.21 release.
+
 ## [v26.09.28.21] - 2026-09-28
 
 ### Added

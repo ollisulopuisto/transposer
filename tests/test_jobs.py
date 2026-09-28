@@ -201,3 +201,41 @@ def test_rasterised_pages_do_not_outlive_the_run(tmp_path):
         assert not (job.workdir / "work" / "input").exists()
     finally:
         made.shutdown()
+
+
+def test_inputs_are_gone_before_the_job_reports_done(tmp_path, monkeypatch):
+    """A job must not say "done" while the upload is still on disk.
+
+    _run set the status first and discarded the inputs afterwards, in its
+    `finally`, so anything that polls for "done" - the page, or the test
+    above, which failed CI on 2026-09-28 - could catch the upload still sitting
+    in work/input. Recorded at the moment of discarding, deterministically.
+    """
+    import music21 as m21
+    from music21.musicxml.m21ToXml import GeneralObjectExporter
+
+    from transposer.web import jobs as jobs_module
+
+    seen = []
+    original = jobs_module._discard_inputs
+
+    def recording(job):
+        seen.append(job.status)
+        original(job)
+
+    monkeypatch.setattr(jobs_module, "_discard_inputs", recording)
+
+    part = m21.stream.Part()
+    part.append(m21.note.Note("c4", quarterLength=4.0))
+    score = m21.stream.Score()
+    score.append(part)
+    data = GeneralObjectExporter().parse(score)
+
+    made = JobStore(tmp_path, workers=1)
+    try:
+        job = made.submit("private.musicxml", data, PipelineOptions(), owner="me")
+        _wait_for(job, timeout=90)
+        assert job.status == "done", job.error
+        assert seen == ["running"]
+    finally:
+        made.shutdown()
