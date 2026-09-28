@@ -86,4 +86,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)"
 
+# What this build contains; the ops dashboard shows it on the version.
+COPY CHANGELOG.md /app/CHANGELOG.md
+
 CMD ["transposer", "serve", "--host", "0.0.0.0", "--port", "8000"]
