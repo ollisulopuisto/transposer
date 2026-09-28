@@ -109,25 +109,44 @@ jobs:
           git tag v${{ steps.calver.outputs.version }}
           git push origin v${{ steps.calver.outputs.version }}
 
+  # Ships each main build to modulaattori, a singleton on oraakkeli3 (aarch64).
+  #
+  # Waits for build-arm64 as well as build-and-push: until build-arm64 has
+  # published the multi-arch manifest, the version tag is amd64-only and the
+  # host would refuse it.
+  #
+  # The key is locked on the host to agent-service-gateway.sh for modulaattori
+  # alone, so what we send is a gateway VERB ("deploy <tag>"), not a shell
+  # command; the gateway runs deploy.sh and passes its exit status back.
+  #
+  # Missing secrets FAIL the job. It used to skip, which left the job green on
+  # every push from 2026-08-21 to 2026-09-28 while nothing was deployed.
   deploy:
-    needs: build-and-push
+    needs: [build-and-push, build-arm64]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      # Skipped rather than failed while the modulaattori stack does not exist
-      # yet on the host: a red build on every push would train everyone to
-      # ignore this workflow.
-      - name: Deploy to the staging slot
-        if: ${{ env.SSH_HOST != '' }}
+      - name: Deploy to modulaattori on oraakkeli3
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            /opt/stacks/scripts/deploy.sh modulaattori deploy ${{ needs.build-and-push.outputs.version }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_FINGERPRINT: ${{ secrets.SSH_FINGERPRINT }}
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+        run: |
+          for v in SSH_HOST SSH_USER SSH_PRIVATE_KEY SSH_FINGERPRINT VERSION; do
+            [ -n "${!v}" ] || { echo "::error::$v is empty - nothing was deployed"; exit 1; }
+          done
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pin the host key: trust what keyscan returns only if it matches
+          # the fingerprint stored as a secret.
+          ssh-keyscan -t ed25519 "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          got=$(ssh-keygen -lf ~/.ssh/known_hosts | cut -d' ' -f2)
+          [ "$got" = "$SSH_FINGERPRINT" ] || { echo "::error::host key $got does not match SSH_FINGERPRINT"; exit 1; }
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$SSH_USER@$SSH_HOST" "deploy $VERSION"
 
   # The arm64 half, built natively on a GitHub-hosted ARM runner.
   #

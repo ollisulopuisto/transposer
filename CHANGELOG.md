@@ -2,6 +2,11 @@
 
 What each build of modulaattori contains, newest first. CI names a build `YY.MM.DD.N`, where N is the commit count (`git rev-list --count HEAD`, .github/workflows/pipeline.yml), so a heading names the build that commit produced. Sections before 2026-09-28 were written from git history, one per day, named after that day's last build. Add each change's entry here in the same commit, under the version its build will get.
 
+## [v26.09.28.23] - 2026-09-28
+
+### Changed
+- **Merging to main now deploys to modulaattori.** The deploy job had never deployed: it had no credentials, so it skipped and still showed green. It now logs in with a key that can only operate modulaattori, checks the server's host key, waits for the arm64 image, and fails loudly if anything is missing.
+
 ## [v26.09.28.22] - 2026-09-28
 
 ### Fixed
