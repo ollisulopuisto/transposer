@@ -11,10 +11,10 @@ jobs:
   test-and-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -52,7 +52,7 @@ jobs:
     outputs:
       version: ${{ steps.calver.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -68,7 +68,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Generate CalVer
         id: calver
@@ -91,7 +91,7 @@ jobs:
       # This builds Audiveris from source, so it is slow the first time and
       # mostly cache hits afterwards.
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           # A manual run pushes too, so a branch can be put on the staging slot
@@ -174,7 +174,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -193,12 +193,12 @@ jobs:
       # `docker` driver, which cannot export a cache at all - and it fails at
       # the very end of setup with "Cache export is not supported for the docker
       # driver", after the login has already succeeded.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # No platforms: and no QEMU - the runner IS aarch64, so a plain build
       # produces an arm64 image and nothing is emulated.
       - name: Build and push arm64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
