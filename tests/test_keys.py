@@ -1,3 +1,5 @@
+import signal
+
 import pytest
 from music21 import key
 
@@ -8,6 +10,48 @@ from transposer.keys import (
     simplify_key,
     transposed_key,
 )
+
+# Regression tests for py/polynomial-redos: user-controlled input must not
+# cause super-linear (catastrophic) backtracking in the parsing regexes.
+# Each adversarial input is an invalid spec that used to make its regex hang
+# quadratically; it must now raise KeySpecError quickly.
+
+_ADVERSARIAL_SEMITONE = "3" + " " * 40000 + "x"
+_ADVERSARIAL_INTERVAL = " " * 60000 + "+" + "M" * 60000
+_ADVERSARIAL_KEY = "C" + " -" * 20000 + "3"
+
+
+class _Timeout(Exception):
+    pass
+
+
+def _alarm_handler(signum, frame):
+    raise _Timeout
+
+
+def parse_with_timeout(spec, seconds=2):
+    """Run ``parse_target`` bounded by an alarm so a ReDoS hang becomes a test
+    failure instead of a hung test process."""
+    previous = signal.signal(signal.SIGALRM, _alarm_handler)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return parse_target(spec)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        _ADVERSARIAL_SEMITONE,
+        _ADVERSARIAL_INTERVAL,
+        _ADVERSARIAL_KEY,
+    ],
+)
+def test_adversarial_specs_do_not_hang(spec):
+    with pytest.raises(KeySpecError):
+        parse_with_timeout(spec)
 
 
 @pytest.mark.parametrize(
