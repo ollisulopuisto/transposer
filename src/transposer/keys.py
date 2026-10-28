@@ -48,7 +48,7 @@ _KEY_RE = re.compile(
     r"""^\s*
     (?P<letter>[A-Ha-h])
     (?P<accidental>\#{1,2}|b{1,2}|-{1,2}(?![A-Za-z])|♯{1,2}|♭{1,2}|x)?
-    \s*[-\s]?\s*
+    [\s-]*
     (?P<quality>[A-Za-z]*)
     \s*$""",
     re.VERBOSE,
@@ -59,13 +59,12 @@ _SEMITONE_RE = re.compile(
     (?:(?P<word>up|down|ylös|alas)\s+)?
     (?P<sign>[+-])?
     (?P<value>\d{1,2})
-    \s*(?:st|semitones?|half\s*steps?|puolisävelaskel\w*)?
-    \s*$""",
+    (?:\s*(?:st|semitones?|half\s*steps?|puolisävelaskel\w*)\s*|\s*)$""",
     re.IGNORECASE | re.VERBOSE,
 )
 
 # e.g. "-M3", "+P5", "m6", "d5", "A4", "P8"
-_INTERVAL_RE = re.compile(r"^\s*(?P<sign>[+-])?\s*(?P<name>[PMmAd]+\d{1,2})\s*$")
+_INTERVAL_RE = re.compile(r"^\s*(?:(?P<sign>[+-])\s*)?(?P<name>[PMmAd]+\d{1,2})\s*$")
 
 
 @dataclass(frozen=True)
