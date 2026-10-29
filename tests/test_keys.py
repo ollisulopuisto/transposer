@@ -19,6 +19,8 @@ from transposer.keys import (
 _ADVERSARIAL_SEMITONE = "3" + " " * 40000 + "x"
 _ADVERSARIAL_INTERVAL = " " * 60000 + "+" + "M" * 60000
 _ADVERSARIAL_KEY = "C" + " -" * 20000 + "3"
+_ADVERSARIAL_FLATS = "C" + "b" * 40000 + "!"
+_ADVERSARIAL_HYPHENS = "C" + "-" * 40000 + "!"
 
 
 class _Timeout(Exception):
@@ -47,6 +49,8 @@ def parse_with_timeout(spec, seconds=2):
         _ADVERSARIAL_SEMITONE,
         _ADVERSARIAL_INTERVAL,
         _ADVERSARIAL_KEY,
+        _ADVERSARIAL_FLATS,
+        _ADVERSARIAL_HYPHENS,
     ],
 )
 def test_adversarial_specs_do_not_hang(spec):

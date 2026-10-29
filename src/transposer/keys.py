@@ -44,15 +44,66 @@ _ACCIDENTAL_MAP = {
 # The hyphen is doing double duty: music21 spells a flat as "E-", and Finnish
 # spells a key as "C-duuri". A hyphen only counts as an accidental when no
 # quality word follows it.
-_KEY_RE = re.compile(
-    r"""^\s*
-    (?P<letter>[A-Ha-h])
-    (?P<accidental>\#{1,2}|b{1,2}|-{1,2}(?![A-Za-z])|♯{1,2}|♭{1,2}|x)?
-    [\s-]*
-    (?P<quality>[A-Za-z]*)
-    \s*$""",
-    re.VERBOSE,
-)
+#
+# The tail after the note letter is captured as one greedy run and split in
+# _split_key_tail() with ordinary string code. Previous revisions encoded the
+# accidental/separator/quality split as optional regex groups, but those
+# overlap ('-' and 'b' appear both in the accidental and after it), which is
+# the ambiguous-quantifier shape CodeQL's py/polynomial-redos query flags and
+# which backtracks super-linearly on adversarial input. One character class
+# with a single quantifier cannot backtrack more than linearly.
+_KEY_RE = re.compile(r"^\s*(?P<letter>[A-Ha-h])(?P<tail>[A-Za-z#♯♭\s-]*)$")
+
+#: Run of separator characters (spaces and hyphens) between the accidental
+#: and the quality word. A lone quantifier, matched once: no backtracking.
+_KEY_SEP_RE = re.compile(r"[\s-]+")
+
+#: Accidental prefixes the old regex captured greedily, longest first within
+#: each character family so "bb" beats "b". Hyphens are handled separately
+#: because of the "not directly before a letter" rule.
+_KEY_ACCIDENTAL_PREFIXES = ("##", "♯♯", "♭♭", "bb", "#", "♯", "♭", "b", "x")
+
+_ASCII_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+
+def _key_accidental_prefix(tail: str) -> str:
+    """Return the accidental the old regex would capture at ``tail``'s start.
+
+    Hyphens count only when the next character is not a letter, mirroring the
+    old ``-{1,2}(?![A-Za-z])`` alternative: in "C-duuri" the hyphen is the
+    Finnish separator, in "C-" it is a flat. Greedy two-before-one, as the
+    old ``{1,2}`` quantifier was.
+    """
+    if tail.startswith("-"):
+        if tail.startswith("--") and (len(tail) == 2 or tail[2] not in _ASCII_LETTERS):
+            return "--"
+        if len(tail) == 1 or tail[1] not in _ASCII_LETTERS:
+            return "-"
+        return ""
+    for prefix in _KEY_ACCIDENTAL_PREFIXES:
+        if tail.startswith(prefix):
+            return prefix
+    return ""
+
+
+def _split_key_tail(tail: str) -> tuple[str, str] | None:
+    """Split ``_KEY_RE``'s tail into ``(accidental, quality)``.
+
+    Returns ``None`` when the remainder after the accidental and separator is
+    not a plain ASCII-letter quality word, exactly the inputs the old regex
+    refused to match (the caller then reports an unparseable target).
+    Trailing whitespace is allowed and ignored, as the old ``\\s*$`` did.
+    """
+    tail = tail.rstrip()
+    accidental = _key_accidental_prefix(tail)
+    rest = tail[len(accidental) :]
+    sep = _KEY_SEP_RE.match(rest)
+    if sep is not None:
+        rest = rest[sep.end() :]
+    if rest and not (rest.isascii() and rest.isalpha()):
+        return None
+    return accidental, rest
+
 
 _SEMITONE_RE = re.compile(
     r"""^\s*
@@ -123,13 +174,14 @@ def parse_target(spec: str) -> TargetSpec:
 
     # Key names.
     m = _KEY_RE.match(text)
-    if m:
+    split = _split_key_tail(m.group("tail")) if m else None
+    if split is not None:
         letter = m.group("letter")
-        written = (m.group("accidental") or "").lower()
+        written = split[0].lower()
         accidental = _ACCIDENTAL_MAP.get(written)
         if accidental is None:
             raise KeySpecError(f"unrecognised accidental in {text!r}")
-        quality = (m.group("quality") or "").lower()
+        quality = split[1].lower()
 
         if quality in _MAJOR_WORDS:
             mode = "major"
@@ -137,7 +189,7 @@ def parse_target(spec: str) -> TargetSpec:
             mode = "minor"
         else:
             raise KeySpecError(
-                f"unrecognised key quality {m.group('quality')!r} in {text!r}; "
+                f"unrecognised key quality {split[1]!r} in {text!r}; "
                 "try 'major'/'minor' (or 'duuri'/'molli')"
             )
 
