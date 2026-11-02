@@ -38,7 +38,7 @@ RUN ./gradlew --no-daemon installDist \
 # --------------------------------------------------------------------------
 # Stage 2: runtime
 # --------------------------------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.15-slim AS runtime
 ARG JDK_VERSION
 
 ENV PYTHONUNBUFFERED=1 \
