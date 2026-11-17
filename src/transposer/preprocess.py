@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -253,14 +252,20 @@ def enhance_pages(
 
 def _run_lengths(column: np.ndarray) -> list[tuple[bool, int]]:
     """Run-length encode a boolean column as ``[(value, length), ...]``."""
-    if column.size == 0:
+    n = column.size
+    if n == 0:
         return []
-    changes = np.flatnonzero(np.diff(column)) + 1
-    boundaries = np.concatenate(([0], changes, [column.size]))
-    return [
-        (bool(column[start]), int(end - start))
-        for start, end in pairwise(boundaries)
-    ]
+    # Vectorized run-length encoding avoids np.diff casting and pairwise loop overhead
+    changes = np.flatnonzero(column[1:] != column[:-1]) + 1
+    if changes.size == 0:
+        return [(bool(column[0]), n)]
+    starts = np.empty(changes.size + 1, dtype=int)
+    starts[0] = 0
+    starts[1:] = changes
+    ends = np.empty(changes.size + 1, dtype=int)
+    ends[:-1] = changes
+    ends[-1] = n
+    return list(zip(column[starts].tolist(), (ends - starts).tolist(), strict=True))
 
 
 def _otsu(gray: np.ndarray) -> int:

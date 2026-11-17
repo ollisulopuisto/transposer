@@ -86,7 +86,13 @@ def create_app(data_dir: Path | str | None = None, workers: int = 2) -> FastAPI:
                     status_code=429,
                     headers={"Retry-After": str(int(verdict.retry_after) + 1)},
                 )
-        return await call_next(request)
+        response = await call_next(request)
+        # Security headers for defense-in-depth:
+        # prevent MIME sniffing, clickjacking, and referrer leakage
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:

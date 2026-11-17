@@ -234,6 +234,10 @@ class JobStore:
                 job.stage = stage
                 job.message = message
 
+            # The inputs go BEFORE the outcome is published. Setting "done" first
+            # and discarding in a `finally` let anything polling for "done" see
+            # the upload still in work/input (CI, 2026-09-28).
+            error: Exception | None = None
             try:
                 output = job.workdir / f"{Path(job.filename).stem}-{_slug(job.options.target)}.pdf"
                 job.result = run_pipeline(
@@ -243,21 +247,23 @@ class JobStore:
                     workdir=job.workdir / "work",
                     progress=progress,
                 )
-                terminal_status = "done"
-                job.stage = "done"
-                job.message = "finished"
             except Exception as exc:
-                terminal_status = "failed"
-                job.stage = "failed"
-                job.message = str(exc) or exc.__class__.__name__
-                job.error = "".join(
-                    traceback.format_exception_only(type(exc), exc)
-                ).strip()
+                error = exc
             finally:
                 _discard_inputs(job)
                 job.finished_at = time.time()
-                # Publish completion only after uploaded inputs are discarded.
-                job.status = terminal_status
+
+            if error is None:
+                job.stage = "done"
+                job.message = "finished"
+                job.status = "done"
+            else:
+                job.stage = "failed"
+                job.message = str(error) or error.__class__.__name__
+                job.error = "".join(
+                    traceback.format_exception_only(type(error), error)
+                ).strip()
+                job.status = "failed"
 
     def _reap_forever(self) -> None:
         """Sweep expired jobs in the background.
