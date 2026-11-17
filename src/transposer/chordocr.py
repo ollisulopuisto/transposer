@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 #: Glyphs Tesseract substitutes for each other on chart fonts. Each entry maps
 #: a character we want to the shapes it gets misread as.
@@ -111,6 +112,11 @@ class ChordRepair:
         return self.repaired is not None
 
 
+#: The repair is a pure function of the text, and the same garbled symbol is
+#: read many times on a chart (once per recognition pass, once per cleanup
+#: pass, and again wherever the text is re-ranked). Cache the outcome so a
+#: repeated string skips the full grammar + edit-distance computation.
+@lru_cache(maxsize=2048)
 def repair_chord_symbol(text: str, max_cost_per_char: float = _MAX_COST_PER_CHAR) -> ChordRepair:
     """Try to read ``text`` as a chord symbol, correcting OCR damage.
 
