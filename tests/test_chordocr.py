@@ -448,3 +448,17 @@ def test_merge_with_an_empty_second_pass():
     added, notes = merge_chord_symbols(primary, m21.stream.Score())
     assert added == 0
     assert notes
+
+
+def test_repair_cache_is_bounded_and_separates_thresholds():
+    repair_chord_symbol.cache_clear()
+    permissive = repair_chord_symbol('Fm?', max_cost_per_char=0.55)
+    strict = repair_chord_symbol('Fm?', max_cost_per_char=0.0)
+    assert permissive.repaired == 'Fm7'
+    assert strict.repaired is None
+    assert repair_chord_symbol('Fm?', max_cost_per_char=0.55) == permissive
+    assert repair_chord_symbol.cache_info().hits == 1
+    for index in range(2100):
+        repair_chord_symbol(f'not-a-chord-{index}')
+    assert repair_chord_symbol.cache_info().currsize == 2048
+    repair_chord_symbol.cache_clear()

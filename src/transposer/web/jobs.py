@@ -243,19 +243,21 @@ class JobStore:
                     workdir=job.workdir / "work",
                     progress=progress,
                 )
-                job.status = "done"
+                terminal_status = "done"
                 job.stage = "done"
                 job.message = "finished"
             except Exception as exc:
-                job.status = "failed"
+                terminal_status = "failed"
                 job.stage = "failed"
                 job.message = str(exc) or exc.__class__.__name__
                 job.error = "".join(
                     traceback.format_exception_only(type(exc), exc)
                 ).strip()
             finally:
-                job.finished_at = time.time()
                 _discard_inputs(job)
+                job.finished_at = time.time()
+                # Publish completion only after uploaded inputs are discarded.
+                job.status = terminal_status
 
     def _reap_forever(self) -> None:
         """Sweep expired jobs in the background.

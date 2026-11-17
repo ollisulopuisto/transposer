@@ -1,0 +1,2 @@
+
+Review follow-up, 2026-11-17: Cache entries are immutable ChordRepair values; tests now verify separate thresholds, repeated hits and the 2048-entry cap. Full tests exposed an existing completion/cleanup race. Terminal job status is now published after input cleanup on both success and failure, with deterministic tests that failed before the fix. All 402 tests and Ruff on changed files pass. No live deployed server was tested.

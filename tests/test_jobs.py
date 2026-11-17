@@ -201,3 +201,33 @@ def test_rasterised_pages_do_not_outlive_the_run(tmp_path):
         assert not (job.workdir / "work" / "input").exists()
     finally:
         made.shutdown()
+
+
+@pytest.mark.parametrize('pipeline_fails', [False, True])
+def test_terminal_status_is_not_visible_during_input_cleanup(tmp_path, monkeypatch, pipeline_fails):
+    from transposer.web import jobs
+
+    def pipeline(*args, **kwargs):
+        if pipeline_fails:
+            raise ValueError('conversion failed')
+        return object()
+
+    observed = []
+    original_cleanup = jobs._discard_inputs
+
+    def cleanup(job):
+        observed.append((job.status, job.finished_at))
+        original_cleanup(job)
+
+    monkeypatch.setattr(jobs, 'run_pipeline', pipeline)
+    monkeypatch.setattr(jobs, '_discard_inputs', cleanup)
+    made = JobStore(tmp_path, workers=1, retain=0)
+    try:
+        job = made.submit('private.musicxml', b'private score', PipelineOptions(), owner='me')
+        _wait_for(job)
+        assert observed == [('running', None)]
+        assert not job.source.exists()
+        assert job.finished_at is not None
+        assert job.status == ('failed' if pipeline_fails else 'done')
+    finally:
+        made.shutdown(purge=True)
