@@ -38,7 +38,7 @@ mozart = [
     "scikit-learn>=1.7.2",
     # Mozart's glyph classifier uses cv2.HOGDescriptor, which OpenCV 5 dropped
     # from the Python bindings.
-    "opencv-python-headless>=5.0.0.93,<6",
+    "opencv-python-headless>=5.1.0.95,<6",
     "imutils>=0.5.4",
     "matplotlib>=3.10.9",
 ]
@@ -48,7 +48,7 @@ oemer = ["oemer>=0.1.8"]
 dev = [
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.17.5",
+    "ruff>=0.17.6",
     # Starlette's TestClient needs this and does not declare it, so the web
     # tests collect fine on a machine that happens to have it and fail on CI.
     "httpx2>=2.14.0",
